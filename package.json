@@ -3,7 +3,7 @@
   "displayName": "CodeGraph Auto MCP",
   "description": "Automatically registers CodeGraph MCP server when opening a project with .codegraph",
   "version": "0.0.1",
-  "publisher": "sven",
+  "publisher": "svenzhao",
   "license": "MIT",
   "engines": {
     "vscode": "^1.106.0"
@@ -19,7 +19,6 @@
     "url": "https://github.com/SvenZhao/codegraph-auto-mcp/issues"
   },
   "homepage": "https://github.com/SvenZhao/codegraph-auto-mcp#readme",
-  "icon": null,
   "activationEvents": [
     "workspaceContains:.codegraph"
   ],
