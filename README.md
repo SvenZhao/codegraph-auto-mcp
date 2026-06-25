@@ -1,22 +1,33 @@
 # CodeGraph Auto MCP
 
+> **Languages**: [English](README.md) | [中文 (Chinese)](README.zh-CN.md)
+
 A VS Code extension that **automatically registers the [CodeGraph](https://github.com/svenzhao/codegraph) MCP server** when you open a project containing a `.codegraph/` directory.
 
 ## The Problem
 
-[CodeGraph](https://github.com/svenzhao/codegraph) is a code intelligence tool that provides a [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server for GitHub Copilot. When you open a project with `.codegraph/` initialized, you need the CodeGraph MCP server to be running so Copilot can use codegraph tools for context-aware code assistance.
+[CodeGraph](https://github.com/svenzhao/codegraph) provides an [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server so that GitHub Copilot can use codegraph's code intelligence tools (`codegraph_explore`, `codegraph_node`, etc.). However, CodeGraph's MCP server is **per-project** — it needs the workspace root path to function correctly:
 
-However, VS Code has a [known bug](https://github.com/microsoft/vscode-copilot-release/issues/14166) (microsoft/vscode-copilot-release#14166) where **MCP servers configured in a global `mcp.json` do not auto-start**. The server only becomes available after manually reloading the window or re-triggering MCP discovery. This means every time you open a project, you have to manually intervene to get CodeGraph working — a poor developer experience.
+```
+codegraph serve --mcp --path <workspace_root>
+```
+
+This creates two problems:
+
+1. **Cannot use a global `mcp.json` configuration** — The `--path` argument varies per workspace, so a single global config can't cover all projects.
+2. **VS Code bug [#14166](https://github.com/microsoft/vscode-copilot-release/issues/14166)** — Even if you try to configure MCP servers via a global `mcp.json`, VS Code has a bug where globally configured MCP servers **do not auto-start**. You have to manually reload the window or re-trigger MCP discovery every time.
+
+The result: every time you open a project, you need to manually intervene to get CodeGraph working — a poor developer experience.
 
 ## The Solution
 
-This extension **automatically registers the CodeGraph MCP server** using the official VS Code API `registerMcpServerDefinitionProvider`. When you open a project that has `.codegraph/`, the extension:
+This extension **automatically registers the CodeGraph MCP server for each workspace** using the official VS Code API `registerMcpServerDefinitionProvider`. When you open a project that has `.codegraph/`, the extension:
 
 1. Checks that `.codegraph/codegraph.db` exists (project is indexed)
 2. Verifies the `codegraph` CLI is available in PATH
-3. Registers the CodeGraph MCP server with VS Code — **no manual `mcp.json` configuration needed**
+3. Registers the CodeGraph MCP server with the **correct workspace root path** — **no manual `mcp.json` configuration needed**
 
-The MCP server starts automatically and Copilot can immediately use codegraph tools like `codegraph_explore`, `codegraph_node`, `codegraph_search`, and `codegraph_callers`.
+The MCP server starts automatically with the right `--path` argument, and Copilot can immediately use codegraph tools.
 
 ## Features
 
