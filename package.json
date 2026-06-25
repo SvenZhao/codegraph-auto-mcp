@@ -1,0 +1,40 @@
+{
+  "name": "codegraph-auto-mcp",
+  "displayName": "CodeGraph Auto MCP",
+  "description": "Automatically registers CodeGraph MCP server when opening a project with .codegraph",
+  "version": "0.0.1",
+  "publisher": "sven",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.106.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "workspaceContains:.codegraph"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "codegraph",
+        "label": "CodeGraph"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "npm run check && npm run build",
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18",
+    "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18 --watch",
+    "check": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "vscode:prepublish": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.106.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0"
+  }
+}
