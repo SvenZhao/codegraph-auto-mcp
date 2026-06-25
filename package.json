@@ -11,6 +11,15 @@
   "categories": [
     "Other"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SvenZhao/codegraph-auto-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SvenZhao/codegraph-auto-mcp/issues"
+  },
+  "homepage": "https://github.com/SvenZhao/codegraph-auto-mcp#readme",
+  "icon": null,
   "activationEvents": [
     "workspaceContains:.codegraph"
   ],
