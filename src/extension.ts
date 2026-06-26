@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import * as path from "path";
-import * as fs from "fs";
+import * as cp from "child_process";
 
 export function activate(context: vscode.ExtensionContext) {
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -8,20 +8,33 @@ export function activate(context: vscode.ExtensionContext) {
     return;
   }
 
-  // Verify .codegraph/codegraph.db exists to avoid registering a broken MCP
-  const dbPath = path.join(root, ".codegraph", "codegraph.db");
-  if (!fs.existsSync(dbPath)) {
+  // Find codegraph CLI in PATH
+  const codegraphPath = resolveCodegraph();
+  if (!codegraphPath) {
     console.log(
-      `[codegraph-auto-mcp] Skipping: ${dbPath} not found`
+      "[codegraph-auto-mcp] 'codegraph' binary not found in PATH"
     );
     return;
   }
 
-  // Check that codegraph CLI is available
-  const codegraphPath = findCodegraph();
-  if (!codegraphPath) {
+  // Use "codegraph status" (official API) to check if the project is initialized
+  try {
+    const stdout = cp.execFileSync(codegraphPath, [
+      "status", root, "--json",
+    ], { encoding: "utf-8", timeout: 5000 });
+    const status = JSON.parse(stdout);
+    if (!status.initialized) {
+      console.log(
+        `[codegraph-auto-mcp] Project not initialized (run "codegraph init" in ${root})`
+      );
+      return;
+    }
     console.log(
-      "[codegraph-auto-mcp] 'codegraph' binary not found in PATH"
+      `[codegraph-auto-mcp] CodeGraph ready: ${status.fileCount} files, ${status.nodeCount} symbols`
+    );
+  } catch (err) {
+    console.log(
+      `[codegraph-auto-mcp] Failed to check status: ${err}`
     );
     return;
   }
@@ -48,20 +61,21 @@ export function activate(context: vscode.ExtensionContext) {
   );
 }
 
-function findCodegraph(): string | undefined {
-  // Look for codegraph in PATH
+function resolveCodegraph(): string | undefined {
   const envPath = process.env.PATH || "";
-  const paths = envPath.split(path.delimiter);
   const binaryName = process.platform === "win32"
     ? "codegraph.cmd"
     : "codegraph";
 
-  for (const dir of paths) {
-    const fullPath = path.join(dir, binaryName);
+  for (const dir of envPath.split(path.delimiter)) {
     try {
-      if (fs.existsSync(fullPath)) {
-        return fullPath;
-      }
+      const fullPath = path.join(dir, binaryName);
+      cp.execFileSync(fullPath, ["--version"], {
+        encoding: "utf-8",
+        stdio: "ignore",
+        timeout: 1000,
+      });
+      return fullPath;
     } catch {
       continue;
     }
