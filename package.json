@@ -2,7 +2,8 @@
   "name": "codegraph-auto-mcp",
   "displayName": "CodeGraph Auto MCP",
   "description": "Automatically registers CodeGraph MCP server when opening a project with .codegraph",
-  "version": "0.0.2",
+  "version": "0.0.3",
+  "icon": "images/logo.png",
   "publisher": "svenzhao",
   "license": "MIT",
   "engines": {
