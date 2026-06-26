@@ -39,12 +39,14 @@
     "check": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "vscode:prepublish": "npm run build",
-    "publish": "vsce publish"
+    "release": "standard-version",
+    "publish": "npm run release && vsce publish"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.106.0",
     "esbuild": "^0.25.0",
+    "standard-version": "^9.5.0",
     "typescript": "^5.7.0"
   }
 }

@@ -98,10 +98,11 @@ The server is registered with the ID `"codegraph"`, which matches the contributi
 ## Building
 
 ```bash
-npm run build      # compile TypeScript check + esbuild bundle
-npm run compile    # same as build
-npm run watch      # watch mode for development
-npm run publish    # build + publish to VS Code Marketplace
+npm run build      # TypeScript 检查 + esbuild 打包
+npm run compile    # 同 build
+npm run watch      # 开发模式监听文件变更
+npm run release    # 通过 standard-version 提升版本号并打 tag
+npm run publish    # release + 发布到 VS Code Marketplace
 ```
 
 ## License

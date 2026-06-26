@@ -101,7 +101,8 @@ codegraph serve --mcp --no-watch --path <workspace_root>
 npm run build      # TypeScript 编译检查 + esbuild 打包
 npm run compile    # 同 build
 npm run watch      # 开发模式监听文件变更
-npm run publish    # 构建 + 发布到 VS Code Marketplace
+npm run release    # 通过 standard-version 提升版本号并打 tag
+npm run publish    # release + 发布到 VS Code Marketplace
 ```
 
 ## 许可证
