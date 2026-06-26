@@ -76,24 +76,98 @@ export function activate(context: vscode.ExtensionContext) {
 
 function resolveCodegraph(): string | undefined {
   const envPath = process.env.PATH || "";
+  const homeDir = process.env.HOME || "";
   const binaryName =
     process.platform === "win32" ? "codegraph.cmd" : "codegraph";
 
+  const candidateDirs = new Set<string>();
+  const addDir = (dir?: string) => {
+    if (dir) {
+      candidateDirs.add(dir);
+    }
+  };
+
+  const explicitPath = process.env.CODEGRAPH_PATH || process.env.CODEGRAPH_BIN;
+  if (explicitPath) {
+    const resolved = path.isAbsolute(explicitPath)
+      ? explicitPath
+      : path.resolve(explicitPath);
+    if (isExecutable(resolved)) {
+      return resolved;
+    }
+  }
+
   for (const dir of envPath.split(path.delimiter)) {
-    try {
-      const fullPath = path.join(dir, binaryName);
-      cp.execFileSync(fullPath, ["--version"], {
-        encoding: "utf-8",
-        stdio: "ignore",
-        timeout: 1000,
-      });
+    addDir(dir);
+  }
+
+  for (const prefix of [
+    process.env.npm_config_prefix,
+    process.env.NPM_CONFIG_PREFIX,
+  ]) {
+    addDir(prefix ? path.join(prefix, "bin") : undefined);
+  }
+
+  const commonDirs = [
+    path.join(homeDir, ".npm_global", "bin"),
+    path.join(homeDir, ".local", "bin"),
+    path.join(homeDir, ".bun", "bin"),
+    path.join(homeDir, ".cargo", "bin"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+  ];
+
+  for (const dir of commonDirs) {
+    addDir(dir);
+  }
+
+  for (const dir of candidateDirs) {
+    const fullPath = path.join(dir, binaryName);
+    if (isExecutable(fullPath)) {
       return fullPath;
+    }
+  }
+
+  for (const shell of [
+    { bin: "/bin/zsh", args: ["-lc", "command -v codegraph 2>/dev/null || true"] },
+    { bin: "/bin/bash", args: ["-lc", "command -v codegraph 2>/dev/null || true"] },
+    { bin: "/bin/sh", args: ["-c", "command -v codegraph 2>/dev/null || true"] },
+  ]) {
+    try {
+      const output = cp.execFileSync(shell.bin, shell.args, {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 2000,
+      });
+      const resolved = output.trim();
+      if (resolved && isExecutable(resolved)) {
+        return resolved;
+      }
     } catch {
       continue;
     }
   }
 
   return undefined;
+}
+
+function isExecutable(fullPath: string): boolean {
+  if (!fullPath) {
+    return false;
+  }
+
+  try {
+    cp.execFileSync(fullPath, ["--version"], {
+      encoding: "utf-8",
+      stdio: "ignore",
+      timeout: 1000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function deactivate() {
