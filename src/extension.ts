@@ -1,7 +1,6 @@
 import * as vscode from "vscode";
 import * as path from "path";
 import * as cp from "child_process";
-import * as os from "os";
 
 export function activate(context: vscode.ExtensionContext) {
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -9,12 +8,13 @@ export function activate(context: vscode.ExtensionContext) {
     return;
   }
 
-  // Find codegraph CLI — try PATH first, then common install locations
+  // Find codegraph CLI in PATH
   const codegraphPath = resolveCodegraph();
   if (!codegraphPath) {
-    console.log(
-      "[codegraph-auto-mcp] 'codegraph' binary not found in PATH"
-    );
+    const msg =
+      "未找到 \`codegraph\` 命令。请确认已安装 (\`npm install -g @sven/codegraph\") " +
+      "且环境变量 PATH 正确（如通过 \`code\` 命令启动 VS Code，可能未加载 shell 配置文件）。";
+    vscode.window.showWarningMessage(`[CodeGraph Auto MCP] ${msg}`);
     return;
   }
 
@@ -30,7 +30,7 @@ export function activate(context: vscode.ExtensionContext) {
       );
     } else {
       console.log(
-        `[codegraph-auto-mcp] Project not initialized (run "codegraph init" in ${root})`
+        `[codegraph-auto-mcp] 项目未初始化（在 ${root} 中运行 \`codegraph init\`）`
       );
     }
   } catch (err) {
@@ -47,7 +47,7 @@ export function activate(context: vscode.ExtensionContext) {
         return [
           new vscode.McpStdioServerDefinition(
             "CodeGraph",
-            codegraphPath,
+            codegraphPath!,
             ["serve", "--mcp", "--no-watch", "--path", root],
             undefined,
             "1.0.0"
@@ -64,41 +64,15 @@ export function activate(context: vscode.ExtensionContext) {
   );
 }
 
-/** Common directories where codegraph might be installed outside $PATH. */
-const COMMON_BIN_DIRS = (() => {
-  const home = os.homedir();
-  return [
-    "/opt/homebrew/bin",
-    "/usr/local/bin",
-    path.join(home, ".npm_global/bin"),
-    path.join(home, ".local/bin"),
-    path.join(home, ".bun/bin"),
-    path.join(home, "go/bin"),
-  ];
-})();
-
 function resolveCodegraph(): string | undefined {
-  const binaryName =
-    process.platform === "win32" ? "codegraph.cmd" : "codegraph";
-
-  // Collect candidates from PATH and common locations
-  const candidates: string[] = [];
   const envPath = process.env.PATH || "";
-  for (const dir of envPath.split(path.delimiter)) {
-    if (dir.trim()) {
-      candidates.push(path.join(dir.trim(), binaryName));
-    }
-  }
-  for (const dir of COMMON_BIN_DIRS) {
-    candidates.push(path.join(dir, binaryName));
-  }
+  const binaryName = process.platform === "win32"
+    ? "codegraph.cmd"
+    : "codegraph";
 
-  // Try each — first match wins
-  const seen = new Set<string>();
-  for (const fullPath of candidates) {
-    if (seen.has(fullPath)) continue;
-    seen.add(fullPath);
+  for (const dir of envPath.split(path.delimiter)) {
     try {
+      const fullPath = path.join(dir, binaryName);
       cp.execFileSync(fullPath, ["--version"], {
         encoding: "utf-8",
         stdio: "ignore",
