@@ -3,43 +3,54 @@ import * as path from "path";
 import * as cp from "child_process";
 
 export function activate(context: vscode.ExtensionContext) {
+  const statusBar = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Right,
+    100
+  );
+
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!root) {
+    statusBar.text = "$(warning) CodeGraph: No workspace";
+    statusBar.tooltip = "未打开工作区";
+    statusBar.show();
     return;
   }
 
-  // Find codegraph CLI in PATH
+  // 1. Look for codegraph CLI
   const codegraphPath = resolveCodegraph();
   if (!codegraphPath) {
-    const msg =
-      "未找到 \`codegraph\` 命令。请确认已安装 (\`npm install -g @sven/codegraph\") " +
-      "且环境变量 PATH 正确（如通过 \`code\` 命令启动 VS Code，可能未加载 shell 配置文件）。";
-    vscode.window.showWarningMessage(`[CodeGraph Auto MCP] ${msg}`);
+    statusBar.text = "$(error) CodeGraph: Not found";
+    statusBar.tooltip =
+      "未找到 codegraph 命令。请确认已安装 (npm install -g @sven/codegraph) 且环境变量 PATH 正确。";
+    statusBar.backgroundColor = new vscode.ThemeColor(
+      "statusBarItem.errorBackground"
+    );
+    statusBar.show();
     return;
   }
 
-  // Optional sanity check — log but never block registration
+  // 2. Check project initialization
   try {
     const stdout = cp.execFileSync(codegraphPath, [
-      "status", root, "--json",
+      "status",
+      root,
+      "--json",
     ], { encoding: "utf-8", timeout: 5000 });
-    const status = JSON.parse(stdout);
-    if (status.initialized) {
-      console.log(
-        `[codegraph-auto-mcp] CodeGraph ready: ${status.fileCount} files, ${status.nodeCount} symbols`
+    const result = JSON.parse(stdout);
+    if (!result.initialized) {
+      statusBar.text = "$(info) CodeGraph: Not initialized";
+      statusBar.tooltip = `项目未初始化，在 ${root} 中运行 \`codegraph init\``;
+      statusBar.backgroundColor = new vscode.ThemeColor(
+        "statusBarItem.warningBackground"
       );
-    } else {
-      console.log(
-        `[codegraph-auto-mcp] 项目未初始化（在 ${root} 中运行 \`codegraph init\`）`
-      );
+      statusBar.show();
+      return;
     }
   } catch (err) {
-    console.log(
-      `[codegraph-auto-mcp] Status check skipped: ${err}`
-    );
+    // Status check failed, still try to register
   }
 
-  // Register the MCP server definition provider
+  // 3. Register MCP server
   const disposable = vscode.lm.registerMcpServerDefinitionProvider(
     "codegraph",
     {
@@ -47,7 +58,7 @@ export function activate(context: vscode.ExtensionContext) {
         return [
           new vscode.McpStdioServerDefinition(
             "CodeGraph",
-            codegraphPath!,
+            codegraphPath,
             ["serve", "--mcp", "--no-watch", "--path", root],
             undefined,
             "1.0.0"
@@ -56,19 +67,17 @@ export function activate(context: vscode.ExtensionContext) {
       },
     }
   );
-
   context.subscriptions.push(disposable);
 
-  console.log(
-    `[codegraph-auto-mcp] Registered CodeGraph MCP server for ${root}`
-  );
+  statusBar.text = "$(check) CodeGraph: Ready";
+  statusBar.tooltip = `CodeGraph MCP 服务器已注册 (${root})`;
+  statusBar.show();
 }
 
 function resolveCodegraph(): string | undefined {
   const envPath = process.env.PATH || "";
-  const binaryName = process.platform === "win32"
-    ? "codegraph.cmd"
-    : "codegraph";
+  const binaryName =
+    process.platform === "win32" ? "codegraph.cmd" : "codegraph";
 
   for (const dir of envPath.split(path.delimiter)) {
     try {
