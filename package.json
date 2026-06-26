@@ -37,7 +37,8 @@
     "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18 --watch",
     "check": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "vscode:prepublish": "npm run build"
+    "vscode:prepublish": "npm run build",
+    "publish": "vsce publish"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

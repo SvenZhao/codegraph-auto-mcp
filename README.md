@@ -51,14 +51,13 @@ The MCP server starts automatically with the right `--path` argument, and Copilo
 git clone https://github.com/svenzhao/codegraph-auto-mcp.git
 cd codegraph-auto-mcp
 npm install
-npm run build
 ```
 
 Then press `F5` in VS Code to start debugging, or install the extension manually:
 
 ```bash
 npm run build
-code --install-extension codegraph-auto-mcp-0.0.1.vsix
+code --install-extension codegraph-auto-mcp-*.vsix
 ```
 
 ## Usage
@@ -102,6 +101,7 @@ The server is registered with the ID `"codegraph"`, which matches the contributi
 npm run build      # compile TypeScript check + esbuild bundle
 npm run compile    # same as build
 npm run watch      # watch mode for development
+npm run publish    # build + publish to VS Code Marketplace
 ```
 
 ## License
