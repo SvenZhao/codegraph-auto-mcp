@@ -2,40 +2,65 @@
 
 > **Languages**: [English](README.md) | [中文 (Chinese)](README.zh-CN.md)
 
-A VS Code extension that **automatically registers the [CodeGraph](https://github.com/svenzhao/codegraph) MCP server** when you open a project containing a `.codegraph/` directory.
+A VS Code extension that **automatically registers the [CodeGraph](https://github.com/svenzhao/codegraph) MCP server** for GitHub Copilot, with built-in project initialization and re-index support — no manual `mcp.json` editing required.
 
 ## The Problem
 
-[CodeGraph](https://github.com/svenzhao/codegraph) provides an [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server so that GitHub Copilot can use codegraph's code intelligence tools (`codegraph_explore`, `codegraph_node`, etc.). However, CodeGraph's MCP server is **per-project** — it needs the workspace root path to function correctly:
+[CodeGraph](https://github.com/svenzhao/codegraph) provides an [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server so that GitHub Copilot can use codegraph's code intelligence tools (`codegraph_explore`, `codegraph_node`, etc.). However, there are several pain points:
 
-```
-codegraph serve --mcp --path <workspace_root>
-```
+1. **Per-workspace path** — CodeGraph needs `--path <workspace_root>` to function correctly, which varies per project.
+2. **VS Code bug [#14166](https://github.com/microsoft/vscode-copilot-release/issues/14166)** — Globally configured MCP servers via `mcp.json` **do not auto-start** reliably.
+3. **Shell environment race** — When VS Code starts, shell init files (`.zshrc`, etc.) may not be fully loaded yet, so the `codegraph` CLI might not be found in PATH initially.
+4. **Project not initialized** — Even with the CLI installed, a project needs `codegraph init` to start indexing. Running this from the terminal is a context switch.
 
-This creates two problems:
-
-1. **Cannot use a global `mcp.json` configuration** — The `--path` argument varies per workspace, so a single global config can't cover all projects.
-2. **VS Code bug [#14166](https://github.com/microsoft/vscode-copilot-release/issues/14166)** — Even if you try to configure MCP servers via a global `mcp.json`, VS Code has a bug where globally configured MCP servers **do not auto-start**. You have to manually reload the window or re-trigger MCP discovery every time.
-
-The result: every time you open a project, you need to manually intervene to get CodeGraph working — a poor developer experience.
-
-## The Solution
-
-This extension **automatically registers the CodeGraph MCP server for each workspace** using the official VS Code API `registerMcpServerDefinitionProvider`. When you open a project that has `.codegraph/`, the extension:
-
-1. Checks that `.codegraph/codegraph.db` exists (project is indexed)
-2. Verifies the `codegraph` CLI is available in PATH
-3. Registers the CodeGraph MCP server with the **correct workspace root path** — **no manual `mcp.json` configuration needed**
-
-The MCP server starts automatically with the right `--path` argument, and Copilot can immediately use codegraph tools.
+The result: developers spend time reloading windows, editing configs, or jumping to terminals — friction that this extension eliminates.
 
 ## Features
 
-- 🔄 **Auto-activation** — activates when opening any project that has `.codegraph/` (using `workspaceContains:.codegraph` activation event)
-- ✅ **Dual validation** — checks both that `codegraph.db` exists and that the `codegraph` CLI is in PATH, preventing registration of a broken MCP server
-- 🚀 **Zero config** — no `mcp.json` editing, no manual steps, no reload required
-- 🌐 **Cross-platform** — works on macOS, Linux, and Windows (automatically detects `codegraph.cmd` on Windows)
-- 📦 **Lightweight** — minimal code, zero runtime dependencies
+- 🚀 **Auto MCP registration** — registers CodeGraph MCP server with the correct workspace path via `registerMcpServerDefinitionProvider`
+- 🔄 **Smart retry** — if the `codegraph` CLI isn't found on startup (shell env race), retries 3 times (2s/5s/10s), then shows a clickable status bar for manual retry
+- 👁️ **File watcher** — monitors `.codegraph/` for changes; when you run `codegraph init` or `codegraph sync`, the extension auto-detects it and (re)registers the MCP server
+- 🛠️ **Built-in commands** — run `CodeGraph: Initialize Project` and `CodeGraph: Force Re-index` directly from VS Code's command palette, no terminal needed
+- 👆 **Clickable status bar** — status bar always shows current state; click it to trigger a full re-check at any time
+- 🌐 **Cross-platform** — macOS, Linux, Windows (auto-detects `codegraph.cmd`)
+- 📦 **Zero runtime dependencies** — lightweight, minimal code
+
+## Commands
+
+| Command | Title | Description |
+|---------|-------|-------------|
+| `codegraph.restart` | **CodeGraph: Restart MCP Server** | Full re-check: find CLI, verify init, register MCP |
+| `codegraph.initProject` | **CodeGraph: Initialize Project** | Open a terminal and run `codegraph init --path <root>` |
+| `codegraph.sync` | **CodeGraph: Force Re-index** | Open a terminal and run `codegraph sync` |
+
+All commands are accessible via `Cmd+Shift+P` (or `Ctrl+Shift+P` on Windows/Linux).
+
+## How It Works
+
+```mermaid
+flowchart TD
+    A[VS Code starts] --> B{tryRegisterServer}
+    B --> C[Find codegraph CLI]
+    C -->|Not found| D[Retry 2s/5s/10s]
+    D -->|Still not found| E[Show ❌ in status bar<br/>Click to retry]
+    D -->|Found later| F
+    C -->|Found| F[Check codegraph status]
+    F -->|Not initialized| G[Show ⚠️ in status bar<br/>+ watch .codegraph/]
+    G -->|User runs init<br/>(command or terminal)| H[Files change → debounce]
+    H --> B
+    F -->|Ready| I[Register MCP server ✅]
+    I --> J[Watch .codegraph/ for<br/>future re-index]
+    J -->|codegraph sync| B
+```
+
+### State coverage
+
+| CLI installed | Project init'd | Status bar | What you can do |
+|:---:|:---:|---|---|
+| ❌ | ❌ | `$(error) Not found` | Install CLI → click status bar |
+| ❌ | ✅ | `$(error) Not found` | (unlikely — init needs CLI) |
+| ✅ | ❌ | `$(info) Not initialized` | Run **CodeGraph: Initialize Project** |
+| ✅ | ✅ | `$(check) Ready` | Everything working |
 
 ## Installation
 
@@ -51,49 +76,39 @@ The MCP server starts automatically with the right `--path` argument, and Copilo
 git clone https://github.com/svenzhao/codegraph-auto-mcp.git
 cd codegraph-auto-mcp
 npm install
-```
-
-Then press `F5` in VS Code to start debugging, or install the extension manually:
-
-```bash
 npm run build
 code --install-extension codegraph-auto-mcp-*.vsix
 ```
 
-## Usage
+To debug, open the project in VS Code and press `F5`.
 
-Once installed, the extension works automatically:
-
-1. Open any project that has a `.codegraph/` directory with a `codegraph.db` file
-2. Make sure the `codegraph` CLI is available in your PATH
-3. The extension registers the CodeGraph MCP server — you can verify in VS Code's MCP server list
-4. GitHub Copilot can now use CodeGraph tools (`codegraph_explore`, `codegraph_search`, `codegraph_node`, `codegraph_callers`) for code intelligence
-
-### Requirements
+## Requirements
 
 - VS Code ^1.106.0 (with Copilot Chat)
-- [CodeGraph CLI](https://github.com/svenzhao/codegraph) installed and in PATH
-- A project with `.codegraph/` directory (initialized via `codegraph init`)
+- [CodeGraph CLI](https://github.com/svenzhao/codegraph) (`npm install -g @sven/codegraph`)
+- A project initialized via `codegraph init`
 
-## How It Works
+## Architecture
 
-```mermaid
-flowchart LR
-    A[Open project<br/>with .codegraph/] --> B{Extension activates}
-    B --> C[Check .codegraph/<br/>codegraph.db exists]
-    B --> D[Find codegraph<br/>CLI in PATH]
-    C --> E[Register MCP server<br/>via registerMcpServerDefinitionProvider]
-    D --> E
-    E --> F[Copilot can now use<br/>CodeGraph tools]
+The extension uses the official VS Code API `vscode.lm.registerMcpServerDefinitionProvider` to dynamically register the MCP server:
+
+```typescript
+vscode.lm.registerMcpServerDefinitionProvider("codegraph", {
+  provideMcpServerDefinitions(_token) {
+    return [
+      new vscode.McpStdioServerDefinition(
+        "CodeGraph",
+        codegraphPath,
+        ["serve", "--mcp", "--no-watch", "--path", workspaceRoot],
+        undefined,
+        "1.0.0"
+      ),
+    ];
+  },
+});
 ```
 
-The extension calls `vscode.lm.registerMcpServerDefinitionProvider("codegraph", ...)` with a provider that returns a `McpStdioServerDefinition`. This tells VS Code to start the CodeGraph MCP server using:
-
-```
-codegraph serve --mcp --no-watch --path <workspace_root>
-```
-
-The server is registered with the ID `"codegraph"`, which matches the contribution in `contributes.mcpServerDefinitionProviders`.
+This is the same pattern used by [GitLens](https://www.gitkraken.com/lens) to register the GitKraken MCP server — a best practice for VS Code extensions that provide MCP services.
 
 ## Building
 

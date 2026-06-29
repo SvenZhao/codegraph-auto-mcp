@@ -1,7 +1,7 @@
 {
   "name": "codegraph-auto-mcp",
   "displayName": "CodeGraph Auto MCP",
-  "description": "Automatically registers CodeGraph MCP server when opening a project with .codegraph",
+  "description": "Auto-registers CodeGraph MCP server for GitHub Copilot, with project init & re-index support",
   "version": "0.0.8",
   "icon": "images/logo.png",
   "publisher": "svenzhao",
@@ -21,10 +21,27 @@
   },
   "homepage": "https://github.com/SvenZhao/codegraph-auto-mcp#readme",
   "activationEvents": [
-    "workspaceContains:.codegraph"
+    "onStartupFinished",
+    "onCommand:codegraph.restart",
+    "onCommand:codegraph.initProject",
+    "onCommand:codegraph.sync"
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "commands": [
+      {
+        "command": "codegraph.restart",
+        "title": "CodeGraph: Restart MCP Server"
+      },
+      {
+        "command": "codegraph.initProject",
+        "title": "CodeGraph: Initialize Project"
+      },
+      {
+        "command": "codegraph.sync",
+        "title": "CodeGraph: Force Re-index"
+      }
+    ],
     "mcpServerDefinitionProviders": [
       {
         "id": "codegraph",
