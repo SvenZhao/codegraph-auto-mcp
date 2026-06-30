@@ -21,10 +21,7 @@
   },
   "homepage": "https://github.com/SvenZhao/codegraph-auto-mcp#readme",
   "activationEvents": [
-    "onStartupFinished",
-    "onCommand:codegraph.restart",
-    "onCommand:codegraph.initProject",
-    "onCommand:codegraph.sync"
+    "onStartupFinished"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -40,6 +37,10 @@
       {
         "command": "codegraph.sync",
         "title": "CodeGraph: Force Re-index"
+      },
+      {
+        "command": "codegraph.showMenu",
+        "title": "CodeGraph: Show Menu"
       }
     ],
     "mcpServerDefinitionProviders": [
@@ -47,7 +48,17 @@
         "id": "codegraph",
         "label": "CodeGraph"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "CodeGraph",
+      "properties": {
+        "codegraph.path": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "手动指定 codegraph CLI 的完整路径。留空则自动检测。\n\n如果已设置且可执行，将跳过自动查找流程。"
+        }
+      }
+    }
   },
   "scripts": {
     "compile": "npm run check && npm run build",

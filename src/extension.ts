@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import * as path from "path";
+import * as fs from "fs";
 import * as cp from "child_process";
 
 // ── 模块级状态 ─────────────────────────────────────────
@@ -10,30 +11,41 @@ let _retryTimer: NodeJS.Timeout | undefined;
 let _retryCount = 0;
 let _watcherDebounce: NodeJS.Timeout | undefined;
 let _postInitTimer: NodeJS.Timeout | undefined;
+let _extensionContext: vscode.ExtensionContext | undefined;
+let _cachedCodegraphPath: string | undefined;
+let _lastTerminalRetry = 0;
+let _resolving = false;
 
 // 重试间隔 (ms)：2s → 5s → 10s，之后转为手动
 const RETRY_DELAYS = [2000, 5000, 10000];
 
 export function activate(context: vscode.ExtensionContext) {
-  // ── 状态栏（可点击，触发 restart） ──
+  _extensionContext = context;
+  _cachedCodegraphPath = context.globalState.get<string>("codegraph.binaryPath");
+
+  // ── 状态栏（可点击，弹出菜单） ──
   _statusBar = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Right,
     100
   );
-  _statusBar.command = "codegraph.restart";
+  _statusBar.command = "codegraph.showMenu";
+  _statusBar.text = "$(loading~spin) CodeGraph";
+  _statusBar.tooltip = "CodeGraph: 正在检测 CLI…";
   _statusBar.show();
   context.subscriptions.push(_statusBar);
 
-  // ── 命令：重启 MCP（直接触发） ──
+  // ── 命令注册 ──
   context.subscriptions.push(
     vscode.commands.registerCommand("codegraph.restart", () => {
       cleanup();
-      tryRegisterServer(context);
-    })
-  );
-
-  // ── 命令：弹出操作菜单 ──
-  context.subscriptions.push(
+      scheduleResolve(context);
+    }),
+    vscode.commands.registerCommand("codegraph.initProject", () => {
+      runCliCommand(context, "init");
+    }),
+    vscode.commands.registerCommand("codegraph.sync", () => {
+      runCliCommand(context, "sync");
+    }),
     vscode.commands.registerCommand("codegraph.showMenu", async () => {
       const pick = await vscode.window.showQuickPick(
         [
@@ -46,34 +58,53 @@ export function activate(context: vscode.ExtensionContext) {
       if (!pick) return;
       if (pick.id === "restart") {
         cleanup();
-        tryRegisterServer(context);
+        scheduleResolve(context);
       } else {
         runCliCommand(context, pick.id);
       }
     })
   );
 
-  // 状态栏点击 → 弹出菜单
-  _statusBar.command = "codegraph.showMenu";
-
   // ── 统一清理 ──
   context.subscriptions.push({ dispose: () => cleanup() });
 
-  // ── 初次尝试 ──
-  tryRegisterServer(context);
+  // ── 终端事件监听：用户开终端时 shell 环境已就绪，自动重试 ──
+  context.subscriptions.push(
+    vscode.window.onDidOpenTerminal(() => {
+      if (_retryCount > 0 && nowMs() - _lastTerminalRetry > 30000) {
+        _lastTerminalRetry = nowMs();
+        _retryCount = 0;
+        scheduleResolve(context);
+      }
+    })
+  );
+
+  // ── 初次尝试（异步，避免阻塞扩展宿主） ──
+  scheduleResolve(context);
+}
+
+function nowMs(): number {
+  return Date.now();
+}
+
+/** 把 tryRegisterServer 放到下一轮事件循环，避免 activate 阻塞 */
+function scheduleResolve(context: vscode.ExtensionContext) {
+  setImmediate(() => {
+    void tryRegisterServer(context);
+  });
 }
 
 // ══════════════════════════════════════════════════════
 //  在终端执行 codegraph 子命令（init / sync）
 // ══════════════════════════════════════════════════════
-function runCliCommand(context: vscode.ExtensionContext, subcommand: string) {
+async function runCliCommand(context: vscode.ExtensionContext, subcommand: string) {
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!root) {
     vscode.window.showWarningMessage("请先打开一个工作区");
     return;
   }
 
-  const codegraphPath = resolveCodegraph();
+  const codegraphPath = await resolveCodegraph();
   if (!codegraphPath) {
     vscode.window.showErrorMessage(
       "未找到 codegraph 命令。请确认已安装 (npm install -g @sven/codegraph)。"
@@ -87,7 +118,6 @@ function runCliCommand(context: vscode.ExtensionContext, subcommand: string) {
   });
   terminal.show();
 
-  // codegraph init/sync 在 cwd 目录下执行即可
   terminal.sendText(`${escapePath(codegraphPath)} ${subcommand}`);
 
   // 安全网：15s 后自动触发一次重新检测
@@ -98,7 +128,7 @@ function schedulePostInitCheck(context: vscode.ExtensionContext) {
   clearPostInitTimer();
   _postInitTimer = setTimeout(() => {
     _postInitTimer = undefined;
-    tryRegisterServer(context);
+    scheduleResolve(context);
   }, 15000);
 }
 
@@ -117,7 +147,7 @@ function escapePath(p: string): string {
 // ══════════════════════════════════════════════════════
 //  核心：查找 binary + 检查初始化 + 注册 MCP
 // ══════════════════════════════════════════════════════
-function tryRegisterServer(context: vscode.ExtensionContext) {
+async function tryRegisterServer(context: vscode.ExtensionContext | undefined) {
   clearRetryTimer();
   stopFileWatcher();
   clearWatcherDebounce();
@@ -129,14 +159,14 @@ function tryRegisterServer(context: vscode.ExtensionContext) {
   }
 
   // ── 1. 查找 codegraph CLI ──
-  const codegraphPath = resolveCodegraph();
+  const codegraphPath = await resolveCodegraph();
   if (!codegraphPath) {
     updateStatusBar(
       "$(error) CodeGraph: Not found",
       "未找到 codegraph 命令。安装后点击重试。",
       "statusBarItem.errorBackground"
     );
-    scheduleRetry(context);
+    if (context) scheduleRetry(context);
     return;
   }
 
@@ -220,7 +250,7 @@ function startFileWatcher(
   const onChange = () => {
     clearWatcherDebounce();
     _watcherDebounce = setTimeout(() => {
-      tryRegisterServer(undefined as any);
+      void tryRegisterServer(_extensionContext);
     }, 1500);
   };
 
@@ -264,7 +294,9 @@ function scheduleRetry(context: vscode.ExtensionContext) {
   const delay = RETRY_DELAYS[_retryCount];
   _retryCount++;
 
-  _retryTimer = setTimeout(() => tryRegisterServer(context), delay);
+  _retryTimer = setTimeout(() => {
+    void tryRegisterServer(context);
+  }, delay);
 }
 
 function clearRetryTimer() {
@@ -304,20 +336,57 @@ function updateStatusBar(
 
 // ══════════════════════════════════════════════════════
 //  查找 codegraph CLI
+//  全异步，避免阻塞扩展宿主
 // ══════════════════════════════════════════════════════
 
-function resolveCodegraph(): string | undefined {
+async function resolveCodegraph(): Promise<string | undefined> {
+  if (_resolving) {
+    // 已在解析中，直接返回缓存（可能 undefined）
+    return _cachedCodegraphPath;
+  }
+  _resolving = true;
+  try {
+    return await doResolveCodegraph();
+  } finally {
+    _resolving = false;
+  }
+}
+
+async function doResolveCodegraph(): Promise<string | undefined> {
+  // ── 0. 用户配置的路径（最高优先级） ──
+  const configuredPath = vscode.workspace.getConfiguration("codegraph").get<string>("path");
+  if (configuredPath && (await verifyExecutable(configuredPath))) {
+    return configuredPath;
+  }
+
+  // ── 0.5 缓存路径（跨会话持久化，避免重复走 shell） ──
+  if (_cachedCodegraphPath && (await verifyExecutable(_cachedCodegraphPath))) {
+    return _cachedCodegraphPath;
+  }
+  const stored = _extensionContext?.globalState.get<string>("codegraph.binaryPath");
+  if (stored && (await verifyExecutable(stored))) {
+    _cachedCodegraphPath = stored;
+    return stored;
+  }
+  // 缓存失效，清掉
+  if (stored) {
+    await _extensionContext?.globalState.update("codegraph.binaryPath", undefined);
+    _cachedCodegraphPath = undefined;
+  }
+
   const envPath = process.env.PATH || "";
-  const homeDir = process.env.HOME || "";
+  const homeDir = process.env.HOME || process.env.USERPROFILE || "";
   const binaryName =
     process.platform === "win32" ? "codegraph.cmd" : "codegraph";
 
   // ── 收集候选目录 ──
-  const candidateDirs = new Set<string>();
+  const candidateDirs: string[] = [];
+  const seen = new Set<string>();
   const addDir = (dir?: string) => {
-    if (dir) {
-      candidateDirs.add(dir);
-    }
+    if (!dir) return;
+    if (seen.has(dir)) return;
+    seen.add(dir);
+    candidateDirs.push(dir);
   };
 
   // 1. 环境变量显式指定
@@ -326,8 +395,8 @@ function resolveCodegraph(): string | undefined {
     const resolved = path.isAbsolute(explicitPath)
       ? explicitPath
       : path.resolve(explicitPath);
-    if (isExecutable(resolved)) {
-      return resolved;
+    if (await verifyExecutable(resolved)) {
+      return cachePath(resolved);
     }
   }
 
@@ -344,97 +413,232 @@ function resolveCodegraph(): string | undefined {
     addDir(prefix ? path.join(prefix, "bin") : undefined);
   }
 
-  // 4. 常见安装目录
-  const commonDirs = [
+  // 4. Node 版本管理器目录（nvm / fnm / volta / asdf / n） —
+  //    uTools / Spotlight / Alfred 启动 VS Code 时 PATH 缺失这些路径，
+  //    需要主动扫一遍当前安装的 node 版本。
+  for (const dir of collectNodeManagerBins(homeDir)) {
+    addDir(dir);
+  }
+
+  // 5. 常见安装目录
+  for (const dir of [
     path.join(homeDir, ".npm_global", "bin"),
     path.join(homeDir, ".local", "bin"),
     path.join(homeDir, ".bun", "bin"),
     path.join(homeDir, ".cargo", "bin"),
+    path.join(homeDir, ".deno", "bin"),
+    path.join(homeDir, ".yarn", "bin"),
+    path.join(homeDir, ".config", "yarn", "global", "node_modules", ".bin"),
     "/opt/homebrew/bin",
     "/usr/local/bin",
     "/usr/bin",
     "/bin",
-  ];
-
-  for (const dir of commonDirs) {
+  ]) {
     addDir(dir);
   }
 
-  // ── 在候选目录中搜索 ──
-  const searchCandidates = (): string | undefined => {
+  const findInCandidates = async (): Promise<string | undefined> => {
     for (const dir of candidateDirs) {
       const fullPath = path.join(dir, binaryName);
-      if (isExecutable(fullPath)) {
+      if (await verifyExecutable(fullPath)) {
         return fullPath;
       }
     }
     return undefined;
   };
 
-  const found = searchCandidates();
-  if (found) return found;
+  const found = await findInCandidates();
+  if (found) return cachePath(found);
 
-  // ── 5. 通过 shell 获取完整 PATH（关键！解决 shell 环境异步问题） ──
-  //    使用 zsh -l（login）让 .zprofile / .zshrc 完整加载
-  try {
-    const output = cp.execFileSync(
-      "/bin/zsh",
-      ["-l", "-c", "echo $PATH"],
-      { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 8000 }
-    );
-    const shellPath = output.trim();
+  // ── 6. 通过用户 shell 获取完整 PATH ──
+  const userShell = vscode.env.shell || process.env.SHELL || "";
+  const shellName = path.basename(userShell).toLowerCase();
+  const isFish = shellName === "fish";
+
+  if (userShell) {
+    const shellPath = await getShellPath(userShell, isFish);
     if (shellPath) {
-      for (const dir of shellPath.split(":")) {
+      for (const dir of shellPath) {
         addDir(dir);
       }
+      const found2 = await findInCandidates();
+      if (found2) return cachePath(found2);
     }
-  } catch {
-    // 获取 shell PATH 失败，继续
   }
 
-  const foundByShell = searchCandidates();
-  if (foundByShell) return foundByShell;
+  // ── 7. 终极手段：直接通过 shell 命令查找 ──
+  const shellSearchEntries: { bin: string; args: string[] }[] = [];
 
-  // ── 6. 终极手段：直接通过 shell 命令查找 ──
-  for (const shell of [
+  if (userShell) {
+    if (isFish) {
+      shellSearchEntries.push({
+        bin: userShell,
+        args: ["-il", "-c", "command -s codegraph 2>/dev/null; or true"],
+      });
+    } else {
+      shellSearchEntries.push(
+        { bin: userShell, args: ["-li", "-c", "command -v codegraph 2>/dev/null || true"] },
+        { bin: userShell, args: ["-lc", "command -v codegraph 2>/dev/null || true"] }
+      );
+    }
+  }
+
+  shellSearchEntries.push(
     { bin: "/bin/zsh", args: ["-li", "-c", "command -v codegraph 2>/dev/null || true"] },
     { bin: "/bin/zsh", args: ["-lc", "command -v codegraph 2>/dev/null || true"] },
     { bin: "/bin/bash", args: ["-lc", "command -v codegraph 2>/dev/null || true"] },
-    { bin: "/bin/sh", args: ["-c", "command -v codegraph 2>/dev/null || true"] },
-  ]) {
-    try {
-      const output = cp.execFileSync(shell.bin, shell.args, {
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "ignore"],
-        timeout: 5000,
-      });
-      const resolved = output.trim();
-      if (resolved && isExecutable(resolved)) {
-        return resolved;
-      }
-    } catch {
-      continue;
+    { bin: "/bin/sh", args: ["-c", "command -v codegraph 2>/dev/null || true"] }
+  );
+
+  for (const shell of shellSearchEntries) {
+    const stdout = await execAsync(shell.bin, shell.args, 5000);
+    if (!stdout) continue;
+    const resolved = stdout.trim().split("\n").pop()?.trim();
+    if (resolved && (await verifyExecutable(resolved))) {
+      return cachePath(resolved);
     }
   }
 
   return undefined;
 }
 
-function isExecutable(fullPath: string): boolean {
-  if (!fullPath) {
-    return false;
-  }
+function cachePath(p: string): string {
+  _cachedCodegraphPath = p;
+  void _extensionContext?.globalState.update("codegraph.binaryPath", p);
+  return p;
+}
 
-  try {
-    cp.execFileSync(fullPath, ["--version"], {
-      encoding: "utf-8",
-      stdio: "ignore",
-      timeout: 1000,
+/** 异步执行子进程，失败返回 undefined */
+function execAsync(
+  file: string,
+  args: string[],
+  timeoutMs: number
+): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    let done = false;
+    const child = cp.execFile(
+      file,
+      args,
+      { encoding: "utf-8", timeout: timeoutMs },
+      (err, stdout) => {
+        if (done) return;
+        done = true;
+        if (err) return resolve(undefined);
+        resolve(stdout);
+      }
+    );
+    child.on("error", () => {
+      if (done) return;
+      done = true;
+      resolve(undefined);
     });
-    return true;
+  });
+}
+
+/** 通过 shell 拿到完整 PATH，按目录数组返回 */
+async function getShellPath(
+  userShell: string,
+  isFish: boolean
+): Promise<string[] | undefined> {
+  // fish: 用 newline 分隔的 string join，避免目录含空格被错切
+  const shellArgs = isFish
+    ? ["-il", "-c", "printf '%s\\n' $PATH"]
+    : ["-li", "-c", "printf '%s' \"$PATH\""];
+
+  const output = await execAsync(userShell, shellArgs, 8000);
+  if (!output) return undefined;
+
+  if (isFish) {
+    // 每行一个目录
+    return output
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  // POSIX: 冒号分隔，取最后一段（防止 shell 初始化输出污染）
+  const trimmed = output.trim();
+  // 如果 shell 在 stdout 里打印了别的东西，最后一行通常才是 PATH
+  const lastLine = trimmed.split("\n").pop()?.trim() ?? trimmed;
+  return lastLine.split(":").map((s) => s.trim()).filter(Boolean);
+}
+
+/** 扫描 nvm / fnm / volta / asdf / n 的 node bin 目录 */
+function collectNodeManagerBins(homeDir: string): string[] {
+  const dirs: string[] = [];
+  if (!homeDir) return dirs;
+
+  // volta
+  dirs.push(path.join(homeDir, ".volta", "bin"));
+
+  // n (prefix 一般在 /usr/local 或 $N_PREFIX)
+  const nPrefix = process.env.N_PREFIX;
+  if (nPrefix) dirs.push(path.join(nPrefix, "bin"));
+
+  // fnm
+  const fnmDir =
+    process.env.FNM_DIR ||
+    process.env.FNM_MULTISHELL_PATH ||
+    path.join(homeDir, ".fnm");
+  collectVersionBins(path.join(fnmDir, "node-versions"), "installation/bin", dirs);
+  collectVersionBins(path.join(homeDir, "Library", "Application Support", "fnm", "node-versions"), "installation/bin", dirs);
+
+  // nvm
+  const nvmDir = process.env.NVM_DIR || path.join(homeDir, ".nvm");
+  // 当前 shell 选中的版本（最高优先级）
+  if (process.env.NVM_BIN) dirs.push(process.env.NVM_BIN);
+  collectVersionBins(path.join(nvmDir, "versions", "node"), "bin", dirs);
+
+  // asdf
+  const asdfDir =
+    process.env.ASDF_DATA_DIR || path.join(homeDir, ".asdf");
+  dirs.push(path.join(asdfDir, "shims"));
+  collectVersionBins(path.join(asdfDir, "installs", "nodejs"), "bin", dirs);
+
+  return dirs;
+}
+
+/** 读取一个目录下的子目录，把 `<sub>/<suffix>` 推进 out（按版本号倒序，新版优先） */
+function collectVersionBins(parent: string, suffix: string, out: string[]) {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(parent);
+  } catch {
+    return;
+  }
+  // 简单按字符串倒序，把 v20 排到 v18 前面
+  entries.sort().reverse();
+  for (const e of entries) {
+    out.push(path.join(parent, e, suffix));
+  }
+}
+
+/**
+ * 校验路径是否是可执行的 codegraph：
+ * 1. fs.stat 快速过滤（不存在 / 非文件 / 不可执行）
+ * 2. 通过后再跑一次 `--version` 真验证（缓存命中场景才会执行）
+ *
+ * 大量候选路径走步骤 1，几乎不产生子进程开销。
+ */
+async function verifyExecutable(fullPath: string): Promise<boolean> {
+  if (!fullPath) return false;
+
+  // 步骤 1：fs 层快速判断
+  let st: fs.Stats;
+  try {
+    st = fs.statSync(fullPath);
   } catch {
     return false;
   }
+  if (!st.isFile()) return false;
+
+  // Unix 下检查可执行位（Windows 上 mode 不可靠，跳过）
+  if (process.platform !== "win32") {
+    if ((st.mode & 0o111) === 0) return false;
+  }
+
+  // 步骤 2：真跑一次 --version，确认是 codegraph 而不是同名其他工具
+  const out = await execAsync(fullPath, ["--version"], 3000);
+  return out !== undefined;
 }
 
 export function deactivate() {
@@ -442,6 +646,6 @@ export function deactivate() {
   _mcpDisposable?.dispose();
   _mcpDisposable = undefined;
   _statusBar = undefined;
+  _extensionContext = undefined;
+  _cachedCodegraphPath = undefined;
 }
-
-
