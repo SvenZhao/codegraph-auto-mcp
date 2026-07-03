@@ -10,7 +10,16 @@
     "vscode": "^1.106.0"
   },
   "categories": [
-    "Other"
+    "AI"
+  ],
+  "keywords": [
+    "copilot",
+    "mcp",
+    "code intelligence",
+    "code graph",
+    "ast",
+    "codebase understanding",
+    "model context protocol"
   ],
   "repository": {
     "type": "git",

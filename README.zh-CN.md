@@ -2,95 +2,94 @@
 
 > **语言**: [English](README.md) | [中文 (Chinese)](README.zh-CN.md)
 
-一个 VS Code 扩展，**为 GitHub Copilot 自动注册 [CodeGraph](https://github.com/svenzhao/codegraph) MCP 服务器**，内置项目初始化与重索引支持——无需手动编辑 `mcp.json`。
+让 GitHub Copilot **真正理解你的代码结构**——不只是文本搜索，而是通过 [CodeGraph](https://github.com/svenzhao/codegraph) MCP 获得 AST 级别的代码智能。
 
-## 问题
+本扩展为 Copilot 自动注册 CodeGraph MCP 服务器。无需编辑 `mcp.json`，无需操心路径配置，装上就能用。
 
-[CodeGraph](https://github.com/svenzhao/codegraph) 提供了 [MCP（模型上下文协议）](https://modelcontextprotocol.io) 服务器，让 GitHub Copilot 可以使用 codegraph 的代码智能工具（`codegraph_explore`、`codegraph_node` 等）。但实际使用中存在几个痛点：
+## ⚡ 快速上手
 
-1. **工作区路径不固定**——CodeGraph 需要 `--path <workspace_root>` 参数，每个项目不同。
-2. **VS Code Bug [#14166](https://github.com/microsoft/vscode-copilot-release/issues/14166)**——全局 `mcp.json` 配置的 MCP 服务器**不会自动启动**。
-3. **Shell 环境竞争**——VS Code 启动时，shell 初始化文件（`.zshrc` 等）可能尚未加载完毕，导致 `codegraph` CLI 暂时找不到。
-4. **项目尚未初始化**——即使 CLI 已安装，项目也需要先执行 `codegraph init`。跑去终端执行是一个上下文切换成本。
+```bash
+# 1. 安装 CodeGraph CLI
+npm install -g @sven/codegraph
+```
 
-结果就是：开发者需要反复重载窗口、编辑配置、或跳转到终端——这些摩擦正是本扩展要消除的。
+```
+# 2. 安装本扩展（从 Releases 下载 VSIX，或从源码构建）
+# 3. 打开任意项目 → Ctrl+Shift+P → "CodeGraph: Initialize Project"
+# 4. 完成！Copilot 现在能结构性地理解你的代码库。
+```
+
+初始化后，Copilot 获得 `codegraph_explore` 等工具，能够遍历调用图、追踪数据流、理解跨文件依赖——远超纯文本上下文的能力。
+
+## 为什么要用？
+
+**没有 CodeGraph MCP** 时，Copilot 把你的代码当文本看。它能 grep 符号名、读你指向的文件、猜测关系。
+
+**有了 CodeGraph MCP**，Copilot 获得整个代码库的预构建知识图谱：
+- **调用图**——谁调用了这个函数？它又被谁调用？
+- **数据流**——这个值从哪来？最终到哪去？
+- **跨文件理解**——依赖、重导出、类型在模块间的传播
+- **影响范围分析**——改这个符号会破坏什么？
+
+结果：更准确的回答、更少幻觉的 API、真正尊重代码架构的修改。
 
 ## 特性
 
-- 🚀 **自动 MCP 注册**——通过 `registerMcpServerDefinitionProvider` 为每个工作区自动注册 CodeGraph MCP 服务器
-- 🔄 **智能重试**——启动时若 `codegraph` CLI 找不到（shell 环境竞争），自动重试 3 次（2s/5s/10s），仍失败则显示可点击的状态栏供手动重试
-- 👁️ **文件监听**——监听 `.codegraph/` 目录变化；你执行 `codegraph init` 或 `codegraph sync` 后，扩展自动感知并（重新）注册 MCP 服务器
-- 🛠️ **内置命令**——在命令面板中直接运行 **CodeGraph: Initialize Project** 和 **CodeGraph: Force Re-index**，无需打开终端
-- 👆 **状态栏可点击**——状态栏始终显示当前状态；点击即可触发全流程重新检测
+- 🚀 **零配置**——装上就用。自动查找 CLI、检测工作区路径、向 Copilot 注册 MCP
+- 🔄 **自愈**——智能重试（2s/5s/10s），处理启动时 shell 环境竞争
+- 👁️ **自动感知初始化**——文件监听器捕获 `codegraph init` / `codegraph sync`，无需重启
+- 🛠️ **命令面板**——直接在 VS Code 中执行 `Initialize Project` 和 `Force Re-index`
+- 👆 **状态栏**——始终显示当前状态；点击重试或访问命令
 - 🌐 **跨平台**——macOS、Linux、Windows（自动识别 `codegraph.cmd`）
-- 📦 **零运行时依赖**——轻量级，代码精炼
+- 📦 **轻量**——零运行时依赖，打包后 ~20KB
 
 ## 命令
 
-| 命令 | 标题 | 说明 |
-|------|------|------|
-| `codegraph.restart` | **CodeGraph: Restart MCP Server** | 全流程重新检测：查找 CLI、验证初始化、注册 MCP |
-| `codegraph.initProject` | **CodeGraph: Initialize Project** | 在终端中执行 `codegraph init --path <root>` |
-| `codegraph.sync` | **CodeGraph: Force Re-index** | 在终端中执行 `codegraph sync` |
+| 命令 | 说明 |
+|------|------|
+| `CodeGraph: Restart MCP Server` | 全流程重新检测：查找 CLI、验证初始化、注册 MCP |
+| `CodeGraph: Initialize Project` | 为当前工作区运行 `codegraph init` |
+| `CodeGraph: Force Re-index` | 运行 `codegraph sync` 重新索引项目 |
 
-所有命令可通过 `Cmd+Shift+P`（Windows/Linux 为 `Ctrl+Shift+P`）执行。
+通过 `Cmd+Shift+P` / `Ctrl+Shift+P` 访问。
 
 ## 工作原理
 
-```mermaid
-flowchart TD
-    A[VS Code 启动] --> B{tryRegisterServer}
-    B --> C[查找 codegraph CLI]
-    C -->|找不到| D[重试 2s/5s/10s]
-    D -->|仍找不到| E[状态栏显示 ❌<br/>点击重试]
-    D -->|后续找到| F
-    C -->|找到| F[检查 codegraph status]
-    F -->|未初始化| G[状态栏显示 ⚠️<br/>+ 监听 .codegraph/]
-    G -->|用户执行 init<br/>(命令或终端)| H[文件变化 → 防抖]
-    H --> B
-    F -->|已就绪| I[注册 MCP 服务器 ✅]
-    I --> J[持续监听 .codegraph/<br/>用于后续重索引]
-    J -->|codegraph sync| B
-```
+扩展启动时执行一个简单的状态机：
 
-### 状态覆盖
+1. **查找 CLI**——搜索 PATH、shell 环境、nvm/fnm/volta/asdf 目录、常见安装位置
+2. **检查初始化**——运行 `codegraph status` 确认 `.codegraph/` 存在且有效
+3. **预热 daemon**——预启动 codegraph daemon，避免 Copilot 首次调用时的冷启动延迟
+4. **注册 MCP**——调用 `vscode.lm.registerMcpServerDefinitionProvider` 向 Copilot 暴露工具
 
-| CLI 已安装 | 项目已初始化 | 状态栏显示 | 你可以做什么 |
-|:---:|:---:|---|---|
-| ❌ | ❌ | `$(error) Not found` | 安装 CLI → 点击状态栏 |
-| ❌ | ✅ | `$(error) Not found` | （极少见——init 需要 CLI） |
-| ✅ | ❌ | `$(info) Not initialized` | 执行 **CodeGraph: Initialize Project** |
-| ✅ | ✅ | `$(check) Ready` | 一切正常 |
+任何步骤失败，状态栏会显示问题。`.codegraph/` 的文件监听器会在你执行 `codegraph init` 或 `codegraph sync` 后自动恢复。
 
 ## 安装
 
-### 通过 VSIX 安装
+### 前提条件
 
-1. 从 [Releases](https://github.com/svenzhao/codegraph-auto-mcp/releases) 下载最新的 `.vsix` 文件
-2. 在 VS Code 中运行 **Extensions: Install from VSIX...**
-3. 选择下载的文件
+- VS Code ^1.106.0 + GitHub Copilot
+- [CodeGraph CLI](https://github.com/svenzhao/codegraph)：`npm install -g @sven/codegraph`
 
-### 从源码构建
+### 安装扩展
 
+**从 [Releases](https://github.com/svenzhao/codegraph-auto-mcp/releases) 下载：**
+1. 下载最新的 `.vsix`
+2. VS Code → **Extensions: Install from VSIX...** → 选择文件
+
+**从源码构建：**
 ```bash
 git clone https://github.com/svenzhao/codegraph-auto-mcp.git
 cd codegraph-auto-mcp
-npm install
-npm run build
+npm install && npm run build
 code --install-extension codegraph-auto-mcp-*.vsix
 ```
 
-要调试，在 VS Code 中打开项目并按 `F5`。
+## 开发者指南
 
-## 前提条件
+### 架构
 
-- VS Code ^1.106.0（带 Copilot Chat）
-- [CodeGraph CLI](https://github.com/svenzhao/codegraph)（`npm install -g @sven/codegraph`）
-- 项目已通过 `codegraph init` 初始化
-
-## 架构
-
-本扩展使用官方 VS Code API `vscode.lm.registerMcpServerDefinitionProvider` 动态注册 MCP 服务器：
+使用官方 VS Code API `vscode.lm.registerMcpServerDefinitionProvider`——与 GitLens 注册 MCP 服务器的模式相同：
 
 ```typescript
 vscode.lm.registerMcpServerDefinitionProvider("codegraph", {
@@ -99,25 +98,22 @@ vscode.lm.registerMcpServerDefinitionProvider("codegraph", {
       new vscode.McpStdioServerDefinition(
         "CodeGraph",
         codegraphPath,
-        ["serve", "--mcp", "--no-watch", "--path", workspaceRoot],
-        undefined,
-        "1.0.0"
+        ["serve", "--mcp", "--path", workspaceRoot],
       ),
     ];
   },
 });
 ```
 
-这与 [GitLens](https://www.gitkraken.com/lens) 注册 GitKraken MCP 服务器所使用的模式完全相同——这是 VS Code 扩展提供 MCP 服务的最佳实践。
+CLI 查找使用 7 层降级：用户配置 → 缓存路径 → `PATH` → npm prefix → Node 版本管理器（nvm/fnm/volta/asdf/n）→ 常见目录 → shell `command -v`。
 
-## 构建
+### 构建
 
 ```bash
-npm run build      # TypeScript 编译检查 + esbuild 打包
-npm run compile    # 同 build
-npm run watch      # 开发模式监听文件变更
-npm run release    # 通过 standard-version 提升版本号并打 tag
-npm run publish    # release + 发布到 VS Code Marketplace
+npm run build      # 类型检查 + esbuild 打包
+npm run watch      # 开发模式，监听文件变更
+npm run release    # 提升版本号 + 打 tag（standard-version）
+npm run publish    # release + 发布到 Marketplace
 ```
 
 ## 许可证

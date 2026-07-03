@@ -2,95 +2,94 @@
 
 > **Languages**: [English](README.md) | [中文 (Chinese)](README.zh-CN.md)
 
-A VS Code extension that **automatically registers the [CodeGraph](https://github.com/svenzhao/codegraph) MCP server** for GitHub Copilot, with built-in project initialization and re-index support — no manual `mcp.json` editing required.
+Give GitHub Copilot **deep structural understanding** of your codebase — not just text search, but AST-level code intelligence via [CodeGraph](https://github.com/svenzhao/codegraph) MCP.
 
-## The Problem
+This extension auto-registers the CodeGraph MCP server for Copilot. No manual `mcp.json` editing, no path headaches, no config files to maintain.
 
-[CodeGraph](https://github.com/svenzhao/codegraph) provides an [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server so that GitHub Copilot can use codegraph's code intelligence tools (`codegraph_explore`, `codegraph_node`, etc.). However, there are several pain points:
+## ⚡ Quick Start
 
-1. **Per-workspace path** — CodeGraph needs `--path <workspace_root>` to function correctly, which varies per project.
-2. **VS Code bug [#14166](https://github.com/microsoft/vscode-copilot-release/issues/14166)** — Globally configured MCP servers via `mcp.json` **do not auto-start** reliably.
-3. **Shell environment race** — When VS Code starts, shell init files (`.zshrc`, etc.) may not be fully loaded yet, so the `codegraph` CLI might not be found in PATH initially.
-4. **Project not initialized** — Even with the CLI installed, a project needs `codegraph init` to start indexing. Running this from the terminal is a context switch.
+```bash
+# 1. Install CodeGraph CLI
+npm install -g @sven/codegraph
+```
 
-The result: developers spend time reloading windows, editing configs, or jumping to terminals — friction that this extension eliminates.
+```
+# 2. Install this extension (VSIX from Releases, or build from source)
+# 3. Open any project → Ctrl+Shift+P → "CodeGraph: Initialize Project"
+# 4. Done! Copilot now understands your codebase structurally.
+```
+
+Once initialized, Copilot gains tools like `codegraph_explore` that let it navigate call graphs, trace data flow, and understand cross-file dependencies — far beyond what text-based context can provide.
+
+## Why Use This?
+
+**Without CodeGraph MCP**, Copilot sees your code as text. It can grep for symbols, read files you point it to, and guess at relationships.
+
+**With CodeGraph MCP**, Copilot gets a pre-built knowledge graph of your entire codebase:
+- **Call graphs** — who calls this function, and what calls them?
+- **Data flow** — where does this value come from, and where does it end up?
+- **Cross-file understanding** — dependencies, re-exports, type propagation across modules
+- **Blast radius analysis** — what breaks if I change this symbol?
+
+The result: more accurate answers, fewer hallucinated APIs, and edits that actually respect your codebase's architecture.
 
 ## Features
 
-- 🚀 **Auto MCP registration** — registers CodeGraph MCP server with the correct workspace path via `registerMcpServerDefinitionProvider`
-- 🔄 **Smart retry** — if the `codegraph` CLI isn't found on startup (shell env race), retries 3 times (2s/5s/10s), then shows a clickable status bar for manual retry
-- 👁️ **File watcher** — monitors `.codegraph/` for changes; when you run `codegraph init` or `codegraph sync`, the extension auto-detects it and (re)registers the MCP server
-- 🛠️ **Built-in commands** — run `CodeGraph: Initialize Project` and `CodeGraph: Force Re-index` directly from VS Code's command palette, no terminal needed
-- 👆 **Clickable status bar** — status bar always shows current state; click it to trigger a full re-check at any time
+- 🚀 **Zero-config** — installs and works. Automatically finds the CLI, detects workspace paths, registers MCP with Copilot
+- 🔄 **Self-healing** — smart retry (2s/5s/10s) handles shell environment race conditions on startup
+- 👁️ **Auto-detect init** — file watcher picks up when you run `codegraph init` or `codegraph sync`, no restart needed
+- 🛠️ **Command palette** — `Initialize Project` and `Force Re-index` right from VS Code
+- 👆 **Status bar** — always shows current state; click to retry or access commands
 - 🌐 **Cross-platform** — macOS, Linux, Windows (auto-detects `codegraph.cmd`)
-- 📦 **Zero runtime dependencies** — lightweight, minimal code
+- 📦 **Lightweight** — zero runtime dependencies, ~20KB bundled
 
 ## Commands
 
-| Command | Title | Description |
-|---------|-------|-------------|
-| `codegraph.restart` | **CodeGraph: Restart MCP Server** | Full re-check: find CLI, verify init, register MCP |
-| `codegraph.initProject` | **CodeGraph: Initialize Project** | Open a terminal and run `codegraph init --path <root>` |
-| `codegraph.sync` | **CodeGraph: Force Re-index** | Open a terminal and run `codegraph sync` |
+| Command | Description |
+|---------|-------------|
+| `CodeGraph: Restart MCP Server` | Full re-check: find CLI, verify init, register MCP |
+| `CodeGraph: Initialize Project` | Run `codegraph init` for the current workspace |
+| `CodeGraph: Force Re-index` | Run `codegraph sync` to re-index the project |
 
-All commands are accessible via `Cmd+Shift+P` (or `Ctrl+Shift+P` on Windows/Linux).
+Access via `Cmd+Shift+P` / `Ctrl+Shift+P`.
 
 ## How It Works
 
-```mermaid
-flowchart TD
-    A[VS Code starts] --> B{tryRegisterServer}
-    B --> C[Find codegraph CLI]
-    C -->|Not found| D[Retry 2s/5s/10s]
-    D -->|Still not found| E[Show ❌ in status bar<br/>Click to retry]
-    D -->|Found later| F
-    C -->|Found| F[Check codegraph status]
-    F -->|Not initialized| G[Show ⚠️ in status bar<br/>+ watch .codegraph/]
-    G -->|User runs init<br/>(command or terminal)| H[Files change → debounce]
-    H --> B
-    F -->|Ready| I[Register MCP server ✅]
-    I --> J[Watch .codegraph/ for<br/>future re-index]
-    J -->|codegraph sync| B
-```
+The extension runs a simple state machine on startup:
 
-### State coverage
+1. **Find CLI** — searches PATH, shell environment, nvm/fnm/volta/asdf dirs, and common install locations
+2. **Check init** — runs `codegraph status` to see if `.codegraph/` exists and is valid
+3. **Warm up daemon** — pre-spawns the codegraph daemon to avoid cold-start latency on first Copilot call
+4. **Register MCP** — calls `vscode.lm.registerMcpServerDefinitionProvider` to expose tools to Copilot
 
-| CLI installed | Project init'd | Status bar | What you can do |
-|:---:|:---:|---|---|
-| ❌ | ❌ | `$(error) Not found` | Install CLI → click status bar |
-| ❌ | ✅ | `$(error) Not found` | (unlikely — init needs CLI) |
-| ✅ | ❌ | `$(info) Not initialized` | Run **CodeGraph: Initialize Project** |
-| ✅ | ✅ | `$(check) Ready` | Everything working |
+If any step fails, the status bar shows the issue. A file watcher on `.codegraph/` auto-recovers when you run `codegraph init` or `codegraph sync` in a terminal.
 
 ## Installation
 
-### From VSIX
+### Prerequisites
 
-1. Download the latest `.vsix` from [Releases](https://github.com/svenzhao/codegraph-auto-mcp/releases)
-2. In VS Code, run **Extensions: Install from VSIX...**
-3. Select the downloaded file
+- VS Code ^1.106.0 with GitHub Copilot
+- [CodeGraph CLI](https://github.com/svenzhao/codegraph): `npm install -g @sven/codegraph`
 
-### From Source
+### Install the Extension
 
+**From [Releases](https://github.com/svenzhao/codegraph-auto-mcp/releases):**
+1. Download the latest `.vsix`
+2. VS Code → **Extensions: Install from VSIX...** → select the file
+
+**From source:**
 ```bash
 git clone https://github.com/svenzhao/codegraph-auto-mcp.git
 cd codegraph-auto-mcp
-npm install
-npm run build
+npm install && npm run build
 code --install-extension codegraph-auto-mcp-*.vsix
 ```
 
-To debug, open the project in VS Code and press `F5`.
+## For Developers
 
-## Requirements
+### Architecture
 
-- VS Code ^1.106.0 (with Copilot Chat)
-- [CodeGraph CLI](https://github.com/svenzhao/codegraph) (`npm install -g @sven/codegraph`)
-- A project initialized via `codegraph init`
-
-## Architecture
-
-The extension uses the official VS Code API `vscode.lm.registerMcpServerDefinitionProvider` to dynamically register the MCP server:
+Uses the official VS Code API `vscode.lm.registerMcpServerDefinitionProvider` — the same pattern as GitLens for its MCP server:
 
 ```typescript
 vscode.lm.registerMcpServerDefinitionProvider("codegraph", {
@@ -99,25 +98,22 @@ vscode.lm.registerMcpServerDefinitionProvider("codegraph", {
       new vscode.McpStdioServerDefinition(
         "CodeGraph",
         codegraphPath,
-        ["serve", "--mcp", "--no-watch", "--path", workspaceRoot],
-        undefined,
-        "1.0.0"
+        ["serve", "--mcp", "--path", workspaceRoot],
       ),
     ];
   },
 });
 ```
 
-This is the same pattern used by [GitLens](https://www.gitkraken.com/lens) to register the GitKraken MCP server — a best practice for VS Code extensions that provide MCP services.
+CLI discovery uses a 7-layer fallback: user config → cached path → `PATH` → npm prefix → node version managers (nvm/fnm/volta/asdf/n) → common dirs → shell `command -v`.
 
-## Building
+### Building
 
 ```bash
-npm run build      # TypeScript 检查 + esbuild 打包
-npm run compile    # 同 build
-npm run watch      # 开发模式监听文件变更
-npm run release    # 通过 standard-version 提升版本号并打 tag
-npm run publish    # release + 发布到 VS Code Marketplace
+npm run build      # typecheck + esbuild bundle
+npm run watch      # dev mode with file watcher
+npm run release    # bump version + tag (standard-version)
+npm run publish    # release + publish to Marketplace
 ```
 
 ## License
