@@ -193,8 +193,61 @@ async function tryRegisterServer(context: vscode.ExtensionContext | undefined) {
     return;
   }
 
-  // ── 3. 注册 MCP server ──
+  // ── 3. 预热 daemon：确保 daemon 已起来、能响应调用后，再向 VS Code 注册 ──
+  // 注册即向 Copilot 暴露工具；若此刻 daemon 还没 spawn/握手完成，
+  // Copilot 调用会撞上 VS Code 内部 undefined.invoke。预热把窗口前移到注册前。
+  const ready = await prewarmDaemon(codegraphPath, root);
+  if (!ready) {
+    updateStatusBar(
+      "$(warning) CodeGraph: daemon warm-up timeout",
+      "daemon 预热超时，仍已注册；首次调用可能需冷启动。点击重启。"
+    );
+  }
+
+  // ── 4. 注册 MCP server ──
   doRegisterMcp(codegraphPath, root);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// ══════════════════════════════════════════════════════
+//  预热 codegraph daemon
+//  codegraph serve 是 launcher（proxy 模式）：它本地立即回答 initialize，
+//  把 tools/call 转发给 detached daemon。我们 spawn 一次 launcher 触发
+//  daemon 拉起，轮询 daemon.sock 出现即说明 daemon 已 bind、可服务，
+//  然后杀掉 launcher（detached daemon 独立存活）。之后 VS Code 自己 spawn
+//  的 launcher 会 fast-path 连到已就绪的 daemon，握手瞬间完成。
+// ══════════════════════════════════════════════════════
+async function prewarmDaemon(codegraphPath: string, root: string): Promise<boolean> {
+  const sockPath = path.join(root, ".codegraph", "daemon.sock");
+  // daemon 可能上一会话已留下（warm），直接复用
+  if (fs.existsSync(sockPath)) return true;
+
+  let child: cp.ChildProcess | undefined;
+  try {
+    child = cp.spawn(codegraphPath, ["serve", "--mcp", "--path", root], {
+      stdio: ["pipe", "ignore", "ignore"],
+      detached: false,
+    });
+    child.unref();
+    child.on("error", () => { /* spawn 失败由超时兜底 */ });
+  } catch {
+    return false;
+  }
+
+  const deadline = Date.now() + 12000;
+  try {
+    while (Date.now() < deadline) {
+      if (fs.existsSync(sockPath)) return true;
+      if (child.exitCode !== null) break; // launcher 挂了
+      await sleep(300);
+    }
+    return fs.existsSync(sockPath);
+  } finally {
+    try { child?.kill(); } catch { /* already gone */ }
+  }
 }
 
 // ══════════════════════════════════════════════════════
