@@ -2,7 +2,7 @@
   "name": "codegraph-auto-mcp",
   "displayName": "CodeGraph Auto MCP",
   "description": "Auto-registers CodeGraph MCP server for GitHub Copilot, with project init & re-index support",
-  "version": "0.0.11",
+  "version": "0.0.12",
   "icon": "images/logo.png",
   "publisher": "svenzhao",
   "license": "MIT",

@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.0.12](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.11...v0.0.12) (2026-07-03)
+
+
+### Bug Fixes
+
+* 注册前预热 daemon,消除 Copilot 调用撞 undefined.invoke 的时序窗口 ([42643a4](https://github.com/SvenZhao/codegraph-auto-mcp/commit/42643a4aa6e34784fbaa0f73869c1ae4850d3743))
+
 ### [0.0.11](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.10...v0.0.11) (2026-07-03)
 
 
