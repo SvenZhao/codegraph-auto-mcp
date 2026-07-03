@@ -214,7 +214,7 @@ function doRegisterMcp(codegraphPath: string, root: string) {
           new vscode.McpStdioServerDefinition(
             "CodeGraph",
             codegraphPath,
-            ["serve", "--mcp", "--no-watch", "--path", root],
+            ["serve", "--mcp", "--path", root],
             undefined,
             "1.0.0"
           ),
@@ -223,14 +223,18 @@ function doRegisterMcp(codegraphPath: string, root: string) {
     }
   );
 
+  // 诚实化的状态栏：MCP 定义已注册，实际服务由 codegraph daemon 提供。
+  // daemon 是 detached 后台进程，由 VS Code 在 Copilot 首次调用时懒启动
+  // （冷启动约 0.5~1s），之后常驻复用；长时间空闲会自我 reap，下次调用重冷启动。
   updateStatusBar(
     "$(check) CodeGraph: Ready",
-    `CodeGraph MCP 服务器已注册 (${root})。点击重新注册。`
+    `CodeGraph MCP 已注册 (${root})。\n服务由 codegraph daemon 提供，首次调用可能需冷启动 daemon（约 0.5~1s）。`
   );
   _retryCount = 0;
 
-  // 保持监听，用于 re-init / sync 后自动重注册
-  startFileWatcher(undefined, root);
+  // 注册后不再监听 .codegraph/**：daemon 自带 watcher 负责 sync，
+  // 插件若继续监听会被 daemon 写 pid/sock/wal 触发 → 反复重注册 →
+  // Copilot 调用落在重注册窗口而卡死。索引新鲜度全权交给 daemon。
 }
 
 // ══════════════════════════════════════════════════════
@@ -254,9 +258,10 @@ function startFileWatcher(
     }, 1500);
   };
 
+  // 仅监听 onDidCreate（检测 codegraph init 完成），不监听 onDidChange/onDidDelete：
+  // onDidChange 会被 daemon 运行时写 pid/sock/wal 触发，造成「重注册 → daemon 写 →
+  // 再重注册」的正反馈循环，是「显示 Ready 但 Copilot 调用卡住」的根因。
   _fileWatcher.onDidCreate(onChange);
-  _fileWatcher.onDidChange(onChange);
-  _fileWatcher.onDidDelete(onChange);
 
   if (context) {
     context.subscriptions.push(_fileWatcher);
