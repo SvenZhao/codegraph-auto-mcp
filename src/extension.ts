@@ -83,18 +83,41 @@ async function doActivate(context: vscode.ExtensionContext) {
 async function doRegisterMcp(context: vscode.ExtensionContext) {
   if (!_root || !_codegraphPath) { return; }
 
-  _statusBar.text = "$(loading~spin) CodeGraph: Starting...";
-  _statusBar.tooltip = "正在预热 daemon...";
+  _statusBar.text = "$(loading~spin) CodeGraph: Starting daemon...";
+  _statusBar.tooltip = "预热 daemon...";
   _statusBar.backgroundColor = undefined;
   _statusBar.show();
 
-  const success = await prewarmDaemon(_codegraphPath, _root);
-  if (!success) {
-    _statusBar.text = "$(warning) CodeGraph: Prewarm failed";
-    _statusBar.tooltip = "daemon 预热失败，工具调用可能不稳定";
-    _statusBar.backgroundColor = new vscode.ThemeColor(
-      "statusBarItem.warningBackground"
+  // CRITICAL: Start daemon BEFORE registering provider.
+  // This ensures daemon is running when VS Code spawns its launcher.
+  // VS Code may spawn launcher before/during resolveMcpServerDefinition,
+  // so we need daemon ready before provider registration.
+  const sockPath = path.join(_root, ".codegraph", "daemon.sock");
+  if (!fs.existsSync(sockPath)) {
+    const child = cp.spawn(
+      _codegraphPath,
+      ["serve", "--mcp", "--path", _root],
+      { stdio: ["pipe", "ignore", "ignore"], detached: true }
     );
+    child.unref();
+
+    // Wait for daemon socket to appear (up to 12s)
+    let ready = false;
+    for (let i = 0; i < 60; i++) {
+      if (fs.existsSync(sockPath)) {
+        ready = true;
+        break;
+      }
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    if (!ready) {
+      _statusBar.text = "$(warning) CodeGraph: Daemon timeout";
+      _statusBar.tooltip = "daemon 启动超时，工具调用可能失败";
+      _statusBar.backgroundColor = new vscode.ThemeColor(
+        "statusBarItem.warningBackground"
+      );
+    }
   }
 
   // Dispose previous registration if any (restart)
@@ -119,17 +142,24 @@ async function doRegisterMcp(context: vscode.ExtensionContext) {
           ),
         ];
       },
-      // Readiness gate: VS Code calls this before starting the MCP server.
-      // We verify daemon socket is ready before allowing the connection.
+      // Verification gate: daemon should already be running.
+      // This is a safety check in case daemon crashed since prewarm.
       async resolveMcpServerDefinition(
         server: vscode.McpStdioServerDefinition,
         _token: vscode.CancellationToken
       ) {
-        const sockPath = path.join(_root!, ".codegraph", "daemon.sock");
-        // Wait up to 5s for daemon socket to appear
-        for (let i = 0; i < 25; i++) {
-          if (fs.existsSync(sockPath)) { break; }
-          await new Promise(r => setTimeout(r, 200));
+        if (!fs.existsSync(sockPath)) {
+          // Daemon crashed since prewarm, restart it
+          const child = cp.spawn(
+            _codegraphPath!,
+            ["serve", "--mcp", "--path", _root!],
+            { stdio: ["pipe", "ignore", "ignore"], detached: true }
+          );
+          child.unref();
+          for (let i = 0; i < 30; i++) {
+            if (fs.existsSync(sockPath)) { break; }
+            await new Promise(r => setTimeout(r, 200));
+          }
         }
         return server;
       },
@@ -138,7 +168,7 @@ async function doRegisterMcp(context: vscode.ExtensionContext) {
   context.subscriptions.push(_mcpDisposable);
 
   _statusBar.text = "$(check) CodeGraph: Ready";
-  _statusBar.tooltip = `CodeGraph MCP 已注册，服务由 daemon 提供`;
+  _statusBar.tooltip = `CodeGraph MCP 已注册，daemon 已就绪`;
   _statusBar.command = undefined;
   _statusBar.backgroundColor = undefined;
   _statusBar.show();
