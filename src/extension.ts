@@ -3,92 +3,188 @@ import * as path from "path";
 import * as cp from "child_process";
 import * as fs from "fs";
 
+let _mcpDisposable: vscode.Disposable | undefined;
+let _statusBar: vscode.StatusBarItem;
+let _codegraphPath: string | undefined;
+let _root: string | undefined;
+
 export function activate(context: vscode.ExtensionContext) {
-  const statusBar = vscode.window.createStatusBarItem(
+  _statusBar = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Right,
     100
   );
 
-  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!root) {
-    statusBar.text = "$(warning) CodeGraph: No workspace";
-    statusBar.tooltip = "未打开工作区";
-    statusBar.show();
+  _root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!_root) {
+    _statusBar.text = "$(warning) CodeGraph: No workspace";
+    _statusBar.tooltip = "未打开工作区";
+    _statusBar.show();
     return;
   }
 
-  // 1. Look for codegraph CLI
-  const codegraphPath = resolveCodegraph();
-  if (!codegraphPath) {
-    statusBar.text = "$(error) CodeGraph: Not found";
-    statusBar.tooltip =
+  _codegraphPath = resolveCodegraph();
+  if (!_codegraphPath) {
+    _statusBar.text = "$(error) CodeGraph: Not found";
+    _statusBar.tooltip =
       "未找到 codegraph 命令。请确认已安装 (npm install -g @sven/codegraph) 且环境变量 PATH 正确。";
-    statusBar.backgroundColor = new vscode.ThemeColor(
+    _statusBar.backgroundColor = new vscode.ThemeColor(
       "statusBarItem.errorBackground"
     );
-    statusBar.show();
+    _statusBar.show();
     return;
   }
 
-  // 2. Check project initialization
+  // Register commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codegraph.restart", () => doRestart(context)),
+    vscode.commands.registerCommand("codegraph.initProject", () => doInit()),
+    vscode.commands.registerCommand("codegraph.sync", () => doSync()),
+    vscode.commands.registerCommand("codegraph.showMenu", () => doShowMenu(context)),
+  );
+
+  // Check init & register MCP
+  doActivate(context);
+}
+
+async function doActivate(context: vscode.ExtensionContext) {
+  if (!_root || !_codegraphPath) { return; }
+
+  // Check project initialization
   try {
-    const stdout = cp.execFileSync(codegraphPath, [
-      "status",
-      root,
-      "--json",
+    const stdout = cp.execFileSync(_codegraphPath, [
+      "status", _root, "--json",
     ], { encoding: "utf-8", timeout: 5000 });
     const result = JSON.parse(stdout);
     if (!result.initialized) {
-      statusBar.text = "$(info) CodeGraph: Not initialized";
-      statusBar.tooltip = `项目未初始化，在 ${root} 中运行 \`codegraph init\``;
-      statusBar.backgroundColor = new vscode.ThemeColor(
+      _statusBar.text = "$(info) CodeGraph: Not initialized";
+      _statusBar.tooltip = `项目未初始化，点击初始化`;
+      _statusBar.command = "codegraph.initProject";
+      _statusBar.backgroundColor = new vscode.ThemeColor(
         "statusBarItem.warningBackground"
       );
-      statusBar.show();
+      _statusBar.show();
       return;
     }
-  } catch (err) {
+  } catch {
     // Status check failed, still try to register
   }
 
-  // 3. Prewarm daemon before registration
-  statusBar.text = "$(loading~spin) CodeGraph: Starting...";
-  statusBar.tooltip = "正在预热 daemon...";
-  statusBar.show();
+  await doRegisterMcp(context);
+}
 
-  prewarmDaemon(codegraphPath, root).then((success) => {
-    if (!success) {
-      statusBar.text = "$(warning) CodeGraph: Prewarm failed";
-      statusBar.tooltip = "daemon 预热失败，工具调用可能不稳定";
-      statusBar.backgroundColor = new vscode.ThemeColor(
-        "statusBarItem.warningBackground"
-      );
-    }
+async function doRegisterMcp(context: vscode.ExtensionContext) {
+  if (!_root || !_codegraphPath) { return; }
 
-    // 4. Register MCP server
-    const disposable = vscode.lm.registerMcpServerDefinitionProvider(
-      "codegraph",
-      {
-        provideMcpServerDefinitions(_token: vscode.CancellationToken) {
-          return [
-            new vscode.McpStdioServerDefinition(
-              "CodeGraph",
-              codegraphPath,
-              ["serve", "--mcp", "--path", root],
-              undefined,
-              "1.0.0"
-            ),
-          ];
-        },
-      }
+  _statusBar.text = "$(loading~spin) CodeGraph: Starting...";
+  _statusBar.tooltip = "正在预热 daemon...";
+  _statusBar.backgroundColor = undefined;
+  _statusBar.show();
+
+  const success = await prewarmDaemon(_codegraphPath, _root);
+  if (!success) {
+    _statusBar.text = "$(warning) CodeGraph: Prewarm failed";
+    _statusBar.tooltip = "daemon 预热失败，工具调用可能不稳定";
+    _statusBar.backgroundColor = new vscode.ThemeColor(
+      "statusBarItem.warningBackground"
     );
-    context.subscriptions.push(disposable);
+  }
 
-    statusBar.text = "$(check) CodeGraph: Ready";
-    statusBar.tooltip = `CodeGraph MCP 服务器已注册 (${root})，服务由 daemon 提供，首次调用可能需冷启动`;
-    statusBar.backgroundColor = undefined;
-    statusBar.show();
+  // Dispose previous registration if any (restart)
+  _mcpDisposable?.dispose();
+
+  _mcpDisposable = vscode.lm.registerMcpServerDefinitionProvider(
+    "codegraph",
+    {
+      provideMcpServerDefinitions(_token: vscode.CancellationToken) {
+        return [
+          new vscode.McpStdioServerDefinition(
+            "CodeGraph",
+            _codegraphPath!,
+            ["serve", "--mcp", "--path", _root!],
+            undefined,
+            "1.0.0"
+          ),
+        ];
+      },
+    }
+  );
+  context.subscriptions.push(_mcpDisposable);
+
+  _statusBar.text = "$(check) CodeGraph: Ready";
+  _statusBar.tooltip = `CodeGraph MCP 已注册，服务由 daemon 提供`;
+  _statusBar.command = undefined;
+  _statusBar.backgroundColor = undefined;
+  _statusBar.show();
+}
+
+async function doRestart(context: vscode.ExtensionContext) {
+  if (!_codegraphPath) {
+    vscode.window.showErrorMessage("CodeGraph: 未找到 codegraph CLI");
+    return;
+  }
+  // Kill daemon
+  if (_root) {
+    const sockPath = path.join(_root, ".codegraph", "daemon.sock");
+    const pidPath = path.join(_root, ".codegraph", "daemon.pid");
+    try {
+      if (fs.existsSync(pidPath)) {
+        const pid = parseInt(fs.readFileSync(pidPath, "utf-8").trim(), 10);
+        if (pid) { process.kill(pid, "SIGTERM"); }
+      }
+    } catch { /* ignore */ }
+    try { fs.unlinkSync(sockPath); } catch { /* ignore */ }
+    try { fs.unlinkSync(pidPath); } catch { /* ignore */ }
+  }
+  await doRegisterMcp(context);
+  vscode.window.showInformationMessage("CodeGraph: MCP 服务器已重启");
+}
+
+async function doInit() {
+  if (!_codegraphPath || !_root) { return; }
+  const terminal = vscode.window.createTerminal("CodeGraph Init");
+  terminal.sendText(`cd "${_root}" && ${_codegraphPath} init`);
+  terminal.show();
+}
+
+async function doSync() {
+  if (!_codegraphPath || !_root) { return; }
+  _statusBar.text = "$(loading~spin) CodeGraph: Syncing...";
+  _statusBar.show();
+  try {
+    cp.execFileSync(_codegraphPath, ["sync", _root], {
+      encoding: "utf-8",
+      timeout: 30000,
+    });
+    _statusBar.text = "$(check) CodeGraph: Synced";
+    vscode.window.showInformationMessage("CodeGraph: 索引已更新");
+  } catch (err: any) {
+    _statusBar.text = "$(error) CodeGraph: Sync failed";
+    vscode.window.showErrorMessage(`CodeGraph: sync 失败 - ${err.message}`);
+  }
+  setTimeout(() => {
+    if (_statusBar.text.includes("Sync")) {
+      _statusBar.text = "$(check) CodeGraph: Ready";
+    }
+  }, 3000);
+}
+
+async function doShowMenu(context: vscode.ExtensionContext) {
+  const items: vscode.QuickPickItem[] = [
+    { label: "$(sync) Restart MCP Server", description: "重启 daemon 并重新注册" },
+    { label: "$(repo) Initialize Project", description: "运行 codegraph init" },
+    { label: "$(refresh) Force Re-index", description: "强制重新索引" },
+  ];
+  const picked = await vscode.window.showQuickPick(items, {
+    placeHolder: "CodeGraph 操作",
   });
+  if (!picked) { return; }
+  if (picked.label.includes("Restart")) {
+    await doRestart(context);
+  } else if (picked.label.includes("Initialize")) {
+    await doInit();
+  } else if (picked.label.includes("Re-index")) {
+    await doSync();
+  }
 }
 
 /**
