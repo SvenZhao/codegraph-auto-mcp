@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.0.24](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.23...v0.0.24) (2026-07-07)
+
+
+### Bug Fixes
+
+* prewarmDaemon 不杀 launcher，等自然退出避免锁竞争 ([e8ddcb3](https://github.com/SvenZhao/codegraph-auto-mcp/commit/e8ddcb37561e7c321a2939b0d502bd0927ea7d7b))
+
 ### [0.0.23](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.22...v0.0.23) (2026-07-07)
 
 
