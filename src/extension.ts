@@ -16,6 +16,14 @@ export function activate(context: vscode.ExtensionContext) {
     100
   );
 
+  // Register commands EARLY — always available regardless of CLI/init state
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codegraph.restart", () => doRestart(context)),
+    vscode.commands.registerCommand("codegraph.initProject", () => doInit()),
+    vscode.commands.registerCommand("codegraph.sync", () => doSync()),
+    vscode.commands.registerCommand("codegraph.showMenu", () => doShowMenu(context)),
+  );
+
   _root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!_root) {
     _statusBar.text = "$(warning) CodeGraph: No workspace";
@@ -35,14 +43,6 @@ export function activate(context: vscode.ExtensionContext) {
     _statusBar.show();
     return;
   }
-
-  // Register commands
-  context.subscriptions.push(
-    vscode.commands.registerCommand("codegraph.restart", () => doRestart(context)),
-    vscode.commands.registerCommand("codegraph.initProject", () => doInit()),
-    vscode.commands.registerCommand("codegraph.sync", () => doSync()),
-    vscode.commands.registerCommand("codegraph.showMenu", () => doShowMenu(context)),
-  );
 
   // Check init & register MCP
   doActivate(context);
@@ -156,8 +156,9 @@ async function doInit() {
 
   // Watch for .codegraph directory creation (init completion)
   const codegraphDir = path.join(_root, ".codegraph");
-  const watcher = fs.watch(path.dirname(codegraphDir), async (eventType, filename) => {
-    if (filename === ".codegraph" && eventType === "rename" && fs.existsSync(codegraphDir)) {
+  const watcher = fs.watch(_root, async (eventType) => {
+    // macOS fs.watch may report filename as null — just check if .codegraph appeared
+    if (fs.existsSync(codegraphDir)) {
       watcher.close();
       // Give init a moment to finish writing index files
       await new Promise(r => setTimeout(r, 1000));
