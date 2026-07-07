@@ -8,6 +8,7 @@ let _statusBar: vscode.StatusBarItem;
 let _codegraphPath: string | undefined;
 let _root: string | undefined;
 let _context: vscode.ExtensionContext | undefined;
+let _mcpChangeEmitter: vscode.EventEmitter<void> | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
   _context = context;
@@ -98,10 +99,15 @@ async function doRegisterMcp(context: vscode.ExtensionContext) {
 
   // Dispose previous registration if any (restart)
   _mcpDisposable?.dispose();
+  _mcpChangeEmitter?.dispose();
+
+  // Create change event emitter for this registration
+  _mcpChangeEmitter = new vscode.EventEmitter<void>();
 
   _mcpDisposable = vscode.lm.registerMcpServerDefinitionProvider(
     "codegraph",
     {
+      onDidChangeMcpServerDefinitions: _mcpChangeEmitter.event,
       provideMcpServerDefinitions(_token: vscode.CancellationToken) {
         return [
           new vscode.McpStdioServerDefinition(
@@ -112,6 +118,20 @@ async function doRegisterMcp(context: vscode.ExtensionContext) {
             "1.0.0"
           ),
         ];
+      },
+      // Readiness gate: VS Code calls this before starting the MCP server.
+      // We verify daemon socket is ready before allowing the connection.
+      async resolveMcpServerDefinition(
+        server: vscode.McpStdioServerDefinition,
+        _token: vscode.CancellationToken
+      ) {
+        const sockPath = path.join(_root!, ".codegraph", "daemon.sock");
+        // Wait up to 5s for daemon socket to appear
+        for (let i = 0; i < 25; i++) {
+          if (fs.existsSync(sockPath)) { break; }
+          await new Promise(r => setTimeout(r, 200));
+        }
+        return server;
       },
     }
   );
@@ -426,6 +446,8 @@ function isExecutable(fullPath: string): boolean {
 export function deactivate() {
   _mcpDisposable?.dispose();
   _mcpDisposable = undefined;
+  _mcpChangeEmitter?.dispose();
+  _mcpChangeEmitter = undefined;
   _codegraphPath = undefined;
   _root = undefined;
 }
