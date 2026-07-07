@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.0.22](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.21...v0.0.22) (2026-07-07)
+
+
+### Bug Fixes
+
+* prewarmDaemon exit handler race condition ([5ea16a6](https://github.com/SvenZhao/codegraph-auto-mcp/commit/5ea16a6eb67c54c434cee4a31cefae9ec489219a))
+
 ### [0.0.21](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.20...v0.0.21) (2026-07-07)
 
 
