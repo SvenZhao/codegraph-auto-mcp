@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.0.19](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.18...v0.0.19) (2026-07-07)
+
+
+### Bug Fixes
+
+* 5 bugs - sync blocking, restart race, init re-activate, prewarm error, restart re-resolve ([e845ec6](https://github.com/SvenZhao/codegraph-auto-mcp/commit/e845ec6015881848f16064edbf6ef1928a22e178))
+
 ### [0.0.18](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.17...v0.0.18) (2026-07-07)
 
 
