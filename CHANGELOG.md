@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.0.23](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.22...v0.0.23) (2026-07-07)
+
+
+### Bug Fixes
+
+* add resolveMcpServerDefinition as readiness gate + onDidChangeMcpServerDefinitions event ([3664ef5](https://github.com/SvenZhao/codegraph-auto-mcp/commit/3664ef5a71f2b92acf42ce0f36ddad267bf6c8f6))
+
 ### [0.0.22](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.21...v0.0.22) (2026-07-07)
 
 
