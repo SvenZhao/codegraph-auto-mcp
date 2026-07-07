@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.0.16](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.15...v0.0.16) (2026-07-07)
+
+
+### Features
+
+* register all commands (restart/init/sync/menu) ([b9e2f2c](https://github.com/SvenZhao/codegraph-auto-mcp/commit/b9e2f2c43c1c8c339248b462a62659843b354696))
+
 ### [0.0.15](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.14...v0.0.15) (2026-07-07)
 
 
