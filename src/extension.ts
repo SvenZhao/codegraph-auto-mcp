@@ -51,11 +51,16 @@ export function activate(context: vscode.ExtensionContext) {
 async function doActivate(context: vscode.ExtensionContext) {
   if (!_root || !_codegraphPath) { return; }
 
-  // Check project initialization
+  // Check project initialization (async — don't block extension host)
   try {
-    const stdout = cp.execFileSync(_codegraphPath, [
-      "status", _root, "--json",
-    ], { encoding: "utf-8", timeout: 5000 });
+    const stdout = await new Promise<string>((resolve, reject) => {
+      cp.execFile(_codegraphPath!, ["status", _root!, "--json"], {
+        encoding: "utf-8",
+        timeout: 5000,
+      }, (err, out) => {
+        if (err) { reject(err); } else { resolve(out); }
+      });
+    });
     const result = JSON.parse(stdout);
     if (!result.initialized) {
       _statusBar.text = "$(info) CodeGraph: Not initialized";
@@ -156,26 +161,27 @@ async function doInit() {
 
   // Watch for .codegraph directory creation (init completion)
   const codegraphDir = path.join(_root, ".codegraph");
-  const watcher = fs.watch(_root, async (eventType) => {
-    // macOS fs.watch may report filename as null — just check if .codegraph appeared
+  let initHandled = false;
+  const watcher = fs.watch(_root, async (eventType, filename) => {
+    if (initHandled) { return; }
+    // Fast path: skip events clearly unrelated to .codegraph
+    if (filename && filename !== ".codegraph" && !filename.startsWith(".codegraph")) {
+      return;
+    }
     if (fs.existsSync(codegraphDir)) {
+      initHandled = true;
       watcher.close();
       // Give init a moment to finish writing index files
       await new Promise(r => setTimeout(r, 1000));
       _statusBar.text = "$(check) CodeGraph: Initialized";
       _statusBar.tooltip = "正在注册 MCP...";
       _statusBar.show();
-      // Re-use the saved context — we need a way to access it
-      // The simplest approach: tell user to run restart
       const action = await vscode.window.showInformationMessage(
         "CodeGraph: 项目已初始化，是否注册 MCP？",
         "注册"
       );
-      if (action === "注册") {
-        // We need context for doRegisterMcp; use a module-level ref
-        if (_context) {
-          await doRegisterMcp(_context);
-        }
+      if (action === "注册" && _context) {
+        await doRegisterMcp(_context);
       }
     }
   });
