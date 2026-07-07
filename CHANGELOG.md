@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.0.17](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.16...v0.0.17) (2026-07-07)
+
+
+### Bug Fixes
+
+* clean up module-level variables in deactivate() ([0f1e789](https://github.com/SvenZhao/codegraph-auto-mcp/commit/0f1e7890a8bbb6b7a417e36c6b3888c5b046d72a))
+
 ### [0.0.16](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.15...v0.0.16) (2026-07-07)
 
 
