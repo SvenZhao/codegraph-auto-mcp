@@ -7,8 +7,10 @@ let _mcpDisposable: vscode.Disposable | undefined;
 let _statusBar: vscode.StatusBarItem;
 let _codegraphPath: string | undefined;
 let _root: string | undefined;
+let _context: vscode.ExtensionContext | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
+  _context = context;
   _statusBar = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Right,
     100
@@ -118,6 +120,8 @@ async function doRegisterMcp(context: vscode.ExtensionContext) {
 }
 
 async function doRestart(context: vscode.ExtensionContext) {
+  // Re-resolve CLI path (settings may have changed)
+  _codegraphPath = resolveCodegraph();
   if (!_codegraphPath) {
     vscode.window.showErrorMessage("CodeGraph: 未找到 codegraph CLI");
     return;
@@ -132,6 +136,11 @@ async function doRestart(context: vscode.ExtensionContext) {
         if (pid) { process.kill(pid, "SIGTERM"); }
       }
     } catch { /* ignore */ }
+    // Wait for socket to disappear (daemon fully dead) before proceeding
+    for (let i = 0; i < 20; i++) {
+      if (!fs.existsSync(sockPath)) { break; }
+      await new Promise(r => setTimeout(r, 200));
+    }
     try { fs.unlinkSync(sockPath); } catch { /* ignore */ }
     try { fs.unlinkSync(pidPath); } catch { /* ignore */ }
   }
@@ -144,6 +153,33 @@ async function doInit() {
   const terminal = vscode.window.createTerminal("CodeGraph Init");
   terminal.sendText(`cd "${_root}" && ${_codegraphPath} init`);
   terminal.show();
+
+  // Watch for .codegraph directory creation (init completion)
+  const codegraphDir = path.join(_root, ".codegraph");
+  const watcher = fs.watch(path.dirname(codegraphDir), async (eventType, filename) => {
+    if (filename === ".codegraph" && eventType === "rename" && fs.existsSync(codegraphDir)) {
+      watcher.close();
+      // Give init a moment to finish writing index files
+      await new Promise(r => setTimeout(r, 1000));
+      _statusBar.text = "$(check) CodeGraph: Initialized";
+      _statusBar.tooltip = "正在注册 MCP...";
+      _statusBar.show();
+      // Re-use the saved context — we need a way to access it
+      // The simplest approach: tell user to run restart
+      const action = await vscode.window.showInformationMessage(
+        "CodeGraph: 项目已初始化，是否注册 MCP？",
+        "注册"
+      );
+      if (action === "注册") {
+        // We need context for doRegisterMcp; use a module-level ref
+        if (_context) {
+          await doRegisterMcp(_context);
+        }
+      }
+    }
+  });
+  // Auto-close watcher after 5 minutes
+  setTimeout(() => { try { watcher.close(); } catch { /* ignore */ } }, 300_000);
 }
 
 async function doSync() {
@@ -151,9 +187,13 @@ async function doSync() {
   _statusBar.text = "$(loading~spin) CodeGraph: Syncing...";
   _statusBar.show();
   try {
-    cp.execFileSync(_codegraphPath, ["sync", _root], {
-      encoding: "utf-8",
-      timeout: 30000,
+    await new Promise<void>((resolve, reject) => {
+      cp.execFile(_codegraphPath!, ["sync", _root!], {
+        encoding: "utf-8",
+        timeout: 30000,
+      }, (err) => {
+        if (err) { reject(err); } else { resolve(); }
+      });
     });
     _statusBar.text = "$(check) CodeGraph: Synced";
     vscode.window.showInformationMessage("CodeGraph: 索引已更新");
@@ -204,6 +244,16 @@ async function prewarmDaemon(
   }
 
   return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const done = (result: boolean) => {
+      if (settled) { return; }
+      settled = true;
+      clearInterval(poll);
+      clearTimeout(timer);
+      try { child.kill(); } catch { /* ignore */ }
+      resolve(result);
+    };
+
     const child = cp.spawn(
       codegraphPath,
       ["serve", "--mcp", "--path", root],
@@ -211,26 +261,25 @@ async function prewarmDaemon(
     );
     child.unref();
 
+    child.on("error", () => { done(false); });
+    child.on("exit", (code) => {
+      // Launcher exited — if socket exists, daemon is running; otherwise failed
+      if (!settled) {
+        done(fs.existsSync(sockPath));
+      }
+    });
+
     const start = Date.now();
     const poll = setInterval(() => {
       if (fs.existsSync(sockPath)) {
-        clearInterval(poll);
-        clearTimeout(timer);
-        // 杀 launcher，detached daemon 独立存活
-        try { child.kill(); } catch { /* ignore */ }
-        resolve(true);
+        done(true);
       } else if (Date.now() - start > timeoutMs) {
-        clearInterval(poll);
-        clearTimeout(timer);
-        try { child.kill(); } catch { /* ignore */ }
-        resolve(false);
+        done(false);
       }
     }, 200);
 
     const timer = setTimeout(() => {
-      clearInterval(poll);
-      try { child.kill(); } catch { /* ignore */ }
-      resolve(false);
+      done(false);
     }, timeoutMs + 1000);
   });
 }
