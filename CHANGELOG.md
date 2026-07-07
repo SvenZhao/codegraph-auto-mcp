@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.0.15](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.14...v0.0.15) (2026-07-07)
+
+
+### Bug Fixes
+
+* use vscode.env.shell for CLI detection, respect user shell config ([6d77205](https://github.com/SvenZhao/codegraph-auto-mcp/commit/6d77205c866b0562437bb47dc26ac68be38b2f6f))
+
 ### [0.0.14](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.13...v0.0.14) (2026-07-07)
 
 
