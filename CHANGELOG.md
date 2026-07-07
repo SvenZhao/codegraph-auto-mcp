@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.0.20](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.19...v0.0.20) (2026-07-07)
+
+
+### Bug Fixes
+
+* register commands before early returns + fs.watch filename null safety ([afa9b0b](https://github.com/SvenZhao/codegraph-auto-mcp/commit/afa9b0bb5be7456ffa7b31a42aaec6d63a27288e))
+
 ### [0.0.19](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.18...v0.0.19) (2026-07-07)
 
 
