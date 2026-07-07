@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.0.14](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.13...v0.0.14) (2026-07-07)
+
+
+### Bug Fixes
+
+* prewarm daemon before MCP registration & remove --no-watch ([01ae113](https://github.com/SvenZhao/codegraph-auto-mcp/commit/01ae1133b9e9d17170c7b955b1555bfe9c166bfe))
+
 ### [0.0.13](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.12...v0.0.13) (2026-07-03)
 
 ### [0.0.12](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.11...v0.0.12) (2026-07-03)
