@@ -195,18 +195,45 @@ function resolveCodegraph(): string | undefined {
     }
   }
 
-  for (const shell of [
-    { bin: "/bin/zsh", args: ["-lc", "command -v codegraph 2>/dev/null || true"] },
-    { bin: "/bin/bash", args: ["-lc", "command -v codegraph 2>/dev/null || true"] },
-    { bin: "/bin/sh", args: ["-c", "command -v codegraph 2>/dev/null || true"] },
-  ]) {
+  // Shell fallback: use vscode.env.shell (user's configured shell) first
+  const userShell = vscode.env.shell || process.env.SHELL || "";
+  const shellCandidates: { bin: string; args: string[] }[] = [];
+
+  if (userShell) {
+    const isFish = userShell.includes("fish");
+    if (isFish) {
+      shellCandidates.push({
+        bin: userShell,
+        args: ["-il", "-c", "command -s codegraph"],
+      });
+    } else {
+      shellCandidates.push({
+        bin: userShell,
+        args: ["-lic", "command -v codegraph 2>/dev/null || true"],
+      });
+    }
+  }
+
+  // Fallback to common shells
+  for (const fallback of ["/bin/zsh", "/bin/bash", "/bin/sh"]) {
+    if (fallback !== userShell) {
+      shellCandidates.push({
+        bin: fallback,
+        args: ["-lc", "command -v codegraph 2>/dev/null || true"],
+      });
+    }
+  }
+
+  for (const shell of shellCandidates) {
     try {
       const output = cp.execFileSync(shell.bin, shell.args, {
         encoding: "utf-8",
         stdio: ["ignore", "pipe", "ignore"],
-        timeout: 2000,
+        timeout: 3000,
       });
-      const resolved = output.trim();
+      // Take last line to avoid shell init stdout pollution
+      const lines = output.trim().split("\n");
+      const resolved = lines[lines.length - 1].trim();
       if (resolved && isExecutable(resolved)) {
         return resolved;
       }
