@@ -255,8 +255,8 @@ async function doShowMenu(context: vscode.ExtensionContext) {
 }
 
 /**
- * 预热 daemon：spawn launcher → 轮询 daemon.sock → 杀 launcher
- * detached daemon 独立存活，后续 VS Code spawn 的 launcher 会 fast-path 连到已就绪的 daemon
+ * 预热 daemon：spawn launcher → 轮询 daemon.sock → 等 launcher 自然退出
+ * daemon 独立存活，launcher 退出后锁已释放，VS Code 的 launcher 可顺利连接
  */
 async function prewarmDaemon(
   codegraphPath: string,
@@ -272,12 +272,12 @@ async function prewarmDaemon(
 
   return new Promise<boolean>((resolve) => {
     let settled = false;
+    let socketDetected = false;
     const done = (result: boolean) => {
       if (settled) { return; }
       settled = true;
       clearInterval(poll);
       clearTimeout(timer);
-      try { child.kill(); } catch { /* ignore */ }
       resolve(result);
     };
 
@@ -289,20 +289,31 @@ async function prewarmDaemon(
     child.unref();
 
     child.on("error", () => { done(false); });
-    // Don't call done() on exit — launcher exits before daemon finishes starting.
-    // The daemon is detached and continues running after launcher exits.
-    // Socket detection is handled by the poll interval; timeout handles daemon crash.
+
+    // When launcher exits, daemon has taken over — safe for VS Code's launcher
+    child.on("exit", () => {
+      if (socketDetected) {
+        done(true);
+      }
+      // If exit before socket, daemon failed — wait for timeout
+    });
 
     const start = Date.now();
     const poll = setInterval(() => {
       if (fs.existsSync(sockPath)) {
-        done(true);
-      } else if (Date.now() - start > timeoutMs) {
-        done(false);
+        socketDetected = true;
+        // Don't kill launcher — let it exit naturally
+        // Daemon will take over, launcher will exit cleanly
+      }
+      if (Date.now() - start > timeoutMs) {
+        // Timeout: kill launcher if still running, daemon may be partially started
+        try { child.kill(); } catch { /* ignore */ }
+        done(fs.existsSync(sockPath));
       }
     }, 200);
 
     const timer = setTimeout(() => {
+      try { child.kill(); } catch { /* ignore */ }
       done(false);
     }, timeoutMs + 1000);
   });
