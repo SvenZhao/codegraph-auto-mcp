@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.0.21](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.20...v0.0.21) (2026-07-07)
+
+
+### Bug Fixes
+
+* async status check + watcher debounce ([ea4a400](https://github.com/SvenZhao/codegraph-auto-mcp/commit/ea4a400eff151227351f8e8216ce0f6b3e54ffc0))
+
 ### [0.0.20](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.19...v0.0.20) (2026-07-07)
 
 
