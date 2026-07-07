@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.0.18](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.17...v0.0.18) (2026-07-07)
+
+
+### Features
+
+* read codegraph.path from VS Code settings (highest priority) ([ee0cc88](https://github.com/SvenZhao/codegraph-auto-mcp/commit/ee0cc8856f0b8878838fcc7b9056a4c3c9054fb8))
+
 ### [0.0.17](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.16...v0.0.17) (2026-07-07)
 
 
