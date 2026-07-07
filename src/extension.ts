@@ -269,12 +269,9 @@ async function prewarmDaemon(
     child.unref();
 
     child.on("error", () => { done(false); });
-    child.on("exit", (code) => {
-      // Launcher exited — if socket exists, daemon is running; otherwise failed
-      if (!settled) {
-        done(fs.existsSync(sockPath));
-      }
-    });
+    // Don't call done() on exit — launcher exits before daemon finishes starting.
+    // The daemon is detached and continues running after launcher exits.
+    // Socket detection is handled by the poll interval; timeout handles daemon crash.
 
     const start = Date.now();
     const poll = setInterval(() => {
