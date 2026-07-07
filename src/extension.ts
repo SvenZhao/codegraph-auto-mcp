@@ -359,5 +359,8 @@ function isExecutable(fullPath: string): boolean {
 }
 
 export function deactivate() {
-  // Nothing to clean up; disposables are handled by VS Code
+  _mcpDisposable?.dispose();
+  _mcpDisposable = undefined;
+  _codegraphPath = undefined;
+  _root = undefined;
 }
