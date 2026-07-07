@@ -248,6 +248,18 @@ function resolveCodegraph(): string | undefined {
     }
   };
 
+  // Step 1: VS Code 用户设置（最高优先级，逃生舱）
+  const configPath = vscode.workspace.getConfiguration("codegraph").get<string>("path");
+  if (configPath) {
+    const resolved = path.isAbsolute(configPath)
+      ? configPath
+      : path.resolve(configPath);
+    if (isExecutable(resolved)) {
+      return resolved;
+    }
+  }
+
+  // Step 2: 环境变量
   const explicitPath = process.env.CODEGRAPH_PATH || process.env.CODEGRAPH_BIN;
   if (explicitPath) {
     const resolved = path.isAbsolute(explicitPath)
