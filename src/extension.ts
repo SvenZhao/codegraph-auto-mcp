@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import * as path from "path";
 import * as cp from "child_process";
 import * as fs from "fs";
+import * as net from "net";
 
 let _mcpDisposable: vscode.Disposable | undefined;
 let _statusBar: vscode.StatusBarItem;
@@ -89,35 +90,17 @@ async function doRegisterMcp(context: vscode.ExtensionContext) {
   _statusBar.show();
 
   // CRITICAL: Start daemon BEFORE registering provider.
-  // This ensures daemon is running when VS Code spawns its launcher.
-  // VS Code may spawn launcher before/during resolveMcpServerDefinition,
-  // so we need daemon ready before provider registration.
+  // Use hello handshake (same as codegraph proxy) to ensure daemon is truly
+  // ready — not just socket file exists. The daemon writes a hello JSON line
+  // on every new connection; if we can read + verify it, the engine is up.
   const sockPath = path.join(_root, ".codegraph", "daemon.sock");
-  if (!fs.existsSync(sockPath)) {
-    const child = cp.spawn(
-      _codegraphPath,
-      ["serve", "--mcp", "--path", _root],
-      { stdio: ["pipe", "ignore", "ignore"], detached: true }
+  const ready = await prewarmDaemon(_codegraphPath, _root, 15000);
+  if (!ready) {
+    _statusBar.text = "$(warning) CodeGraph: Daemon timeout";
+    _statusBar.tooltip = "daemon 启动超时，工具调用可能失败";
+    _statusBar.backgroundColor = new vscode.ThemeColor(
+      "statusBarItem.warningBackground"
     );
-    child.unref();
-
-    // Wait for daemon socket to appear (up to 12s)
-    let ready = false;
-    for (let i = 0; i < 60; i++) {
-      if (fs.existsSync(sockPath)) {
-        ready = true;
-        break;
-      }
-      await new Promise(r => setTimeout(r, 200));
-    }
-
-    if (!ready) {
-      _statusBar.text = "$(warning) CodeGraph: Daemon timeout";
-      _statusBar.tooltip = "daemon 启动超时，工具调用可能失败";
-      _statusBar.backgroundColor = new vscode.ThemeColor(
-        "statusBarItem.warningBackground"
-      );
-    }
   }
 
   // Dispose previous registration if any (restart)
@@ -142,24 +125,38 @@ async function doRegisterMcp(context: vscode.ExtensionContext) {
           ),
         ];
       },
-      // Verification gate: daemon should already be running.
-      // This is a safety check in case daemon crashed since prewarm.
+      // Verification gate: verify daemon is truly responsive via hello
+      // handshake. If socket exists but hello fails, daemon is stuck/crashed —
+      // clean up and respawn.
       async resolveMcpServerDefinition(
         server: vscode.McpStdioServerDefinition,
         _token: vscode.CancellationToken
       ) {
-        if (!fs.existsSync(sockPath)) {
-          // Daemon crashed since prewarm, restart it
-          const child = cp.spawn(
-            _codegraphPath!,
-            ["serve", "--mcp", "--path", _root!],
-            { stdio: ["pipe", "ignore", "ignore"], detached: true }
-          );
-          child.unref();
-          for (let i = 0; i < 30; i++) {
-            if (fs.existsSync(sockPath)) { break; }
-            await new Promise(r => setTimeout(r, 200));
-          }
+        const ok = await verifyDaemonHello(sockPath, 3000);
+        if (!ok) {
+          // Daemon unresponsive — clean up stale state and respawn
+          const pidPath = path.join(_root!, ".codegraph", "daemon.pid");
+          try {
+            if (fs.existsSync(pidPath)) {
+              const raw = fs.readFileSync(pidPath, "utf-8").trim();
+              // Lockfile is JSON: { pid, version, socketPath, startedAt }
+              // Be tolerant of legacy plain-pid format too.
+              let pid: number | undefined;
+              try {
+                const info = JSON.parse(raw);
+                pid = typeof info.pid === "number" ? info.pid : undefined;
+              } catch {
+                pid = parseInt(raw, 10);
+              }
+              if (pid && Number.isFinite(pid)) {
+                try { process.kill(pid, "SIGTERM"); } catch { /* ignore */ }
+              }
+            }
+          } catch { /* ignore */ }
+          try { fs.unlinkSync(sockPath); } catch { /* ignore */ }
+          try { fs.unlinkSync(pidPath); } catch { /* ignore */ }
+          // Spawn fresh daemon and wait for hello
+          await prewarmDaemon(_codegraphPath!, _root!, 15000);
         }
         return server;
       },
@@ -285,68 +282,107 @@ async function doShowMenu(context: vscode.ExtensionContext) {
 }
 
 /**
- * 预热 daemon：spawn launcher → 轮询 daemon.sock → 等 launcher 自然退出
- * daemon 独立存活，launcher 退出后锁已释放，VS Code 的 launcher 可顺利连接
+ * Connect to the daemon socket and read the hello line.
+ * The daemon writes a JSON line on every new connection:
+ *   { "codegraph": "<version>", "pid": <n>, "socketPath": "<path>", "protocol": 1 }
+ * This is the SAME handshake the codegraph proxy uses to verify readiness.
+ * If we can read + parse + validate it, the daemon engine is up and ready
+ * to serve MCP requests — not just listening on the socket.
+ */
+function verifyDaemonHello(sockPath: string, timeoutMs = 5000): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const done = (result: boolean) => {
+      if (settled) { return; }
+      settled = true;
+      clearTimeout(timer);
+      try { socket.destroy(); } catch { /* ignore */ }
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => done(false), timeoutMs);
+    const socket = net.createConnection(sockPath);
+    socket.setEncoding("utf8");
+
+    let buf = "";
+    socket.on("data", (chunk: string) => {
+      if (settled) { return; }
+      buf += chunk;
+      // Bound buffer against malicious/oversized hello
+      if (buf.length > 4096) {
+        done(false);
+        return;
+      }
+      const nl = buf.indexOf("\n");
+      if (nl >= 0) {
+        const line = buf.slice(0, nl).trim();
+        try {
+          const hello = JSON.parse(line);
+          if (
+            typeof hello.codegraph === "string" &&
+            typeof hello.pid === "number" &&
+            typeof hello.socketPath === "string" &&
+            hello.protocol === 1
+          ) {
+            done(true);
+          } else {
+            done(false);
+          }
+        } catch {
+          done(false);
+        }
+      }
+    });
+
+    socket.on("error", () => done(false));
+    socket.on("close", () => done(false));
+  });
+}
+
+/**
+ * 预热 daemon：spawn launcher → 轮询 daemon.sock → hello 握手验证 → 关闭 launcher
+ * 关键：仅 socket 文件存在不等于 daemon 就绪（仅代表 bind() 完成）。
+ * 必须通过 hello 握手确认 engine 已起来，否则首次 MCP 调用会失败。
  */
 async function prewarmDaemon(
   codegraphPath: string,
   root: string,
-  timeoutMs = 12000
+  timeoutMs = 15000
 ): Promise<boolean> {
   const sockPath = path.join(root, ".codegraph", "daemon.sock");
 
-  // daemon 已经跑着，直接复用
+  // Daemon 已存在 → 直接验证 hello
   if (fs.existsSync(sockPath)) {
-    return true;
+    return await verifyDaemonHello(sockPath, 3000);
   }
 
-  return new Promise<boolean>((resolve) => {
-    let settled = false;
-    let socketDetected = false;
-    const done = (result: boolean) => {
-      if (settled) { return; }
-      settled = true;
-      clearInterval(poll);
-      clearTimeout(timer);
-      resolve(result);
-    };
+  // Spawn launcher（它会启动 detached daemon）
+  const child = cp.spawn(
+    codegraphPath,
+    ["serve", "--mcp", "--path", root],
+    { stdio: ["pipe", "ignore", "ignore"], detached: true }
+  );
+  child.unref();
 
-    const child = cp.spawn(
-      codegraphPath,
-      ["serve", "--mcp", "--path", root],
-      { stdio: ["pipe", "ignore", "ignore"], detached: true }
-    );
-    child.unref();
-
-    child.on("error", () => { done(false); });
-
-    // When launcher exits, daemon has taken over — safe for VS Code's launcher
-    child.on("exit", () => {
-      if (socketDetected) {
-        done(true);
+  // 轮询：socket 出现后立刻做 hello 握手
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (fs.existsSync(sockPath)) {
+      const ready = await verifyDaemonHello(sockPath, 3000);
+      if (ready) {
+        // Daemon 已就绪 → 关掉我们的 prewarm launcher
+        // daemon 是 detached 进程，会继续存活
+        try { child.kill("SIGTERM"); } catch { /* ignore */ }
+        return true;
       }
-      // If exit before socket, daemon failed — wait for timeout
-    });
+      // socket 在但 hello 失败 → daemon 还在初始化，继续轮询
+    }
+    await new Promise(r => setTimeout(r, 300));
+  }
 
-    const start = Date.now();
-    const poll = setInterval(() => {
-      if (fs.existsSync(sockPath)) {
-        socketDetected = true;
-        // Don't kill launcher — let it exit naturally
-        // Daemon will take over, launcher will exit cleanly
-      }
-      if (Date.now() - start > timeoutMs) {
-        // Timeout: kill launcher if still running, daemon may be partially started
-        try { child.kill(); } catch { /* ignore */ }
-        done(fs.existsSync(sockPath));
-      }
-    }, 200);
-
-    const timer = setTimeout(() => {
-      try { child.kill(); } catch { /* ignore */ }
-      done(false);
-    }, timeoutMs + 1000);
-  });
+  // 超时：杀掉 launcher
+  try { child.kill("SIGTERM"); } catch { /* ignore */ }
+  return false;
 }
 
 function resolveCodegraph(): string | undefined {
