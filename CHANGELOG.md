@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.0.27](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.26...v0.0.27) (2026-07-08)
+
+
+### Bug Fixes
+
+* 立即同步注册 MCP provider，消除首次调用 undefined.invoke ([0ac70d0](https://github.com/SvenZhao/codegraph-auto-mcp/commit/0ac70d031eb090279227ba826493961e930a350f))
+
 ### [0.0.26](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.25...v0.0.26) (2026-07-08)
 
 
