@@ -10,9 +10,16 @@ let _codegraphPath: string | undefined;
 let _root: string | undefined;
 let _context: vscode.ExtensionContext | undefined;
 let _mcpChangeEmitter: vscode.EventEmitter<void> | undefined;
+let _extensionVersion = "0.0.0";
+// Per-registration server version. Changing it on every registration forces
+// VS Code to discard any stale (dead) cached server connection instead of
+// reusing it — a reused dead connection surfaces as
+// `TypeError: Cannot read properties of undefined (reading 'invoke')`.
+let _mcpVersion = "1.0.0";
 
 export function activate(context: vscode.ExtensionContext) {
   _context = context;
+  _extensionVersion = context.extension?.packageJSON?.version ?? "0.0.0";
   _statusBar = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Right,
     100
@@ -46,14 +53,27 @@ export function activate(context: vscode.ExtensionContext) {
     return;
   }
 
-  // Check init & register MCP
-  doActivate(context);
+  // Register the MCP provider SYNCHRONOUSLY and IMMEDIATELY — before any async
+  // work. Every project window runs this on open, and each project's daemon is
+  // independent (rooted at its own `.codegraph`). Registration must NOT wait on
+  // the `codegraph status` check: VS Code exposes the cached tool list to
+  // Copilot the instant the window opens, so any gap between that moment and
+  // provider registration is a window where a call routes to `undefined` →
+  // `TypeError: ... (reading 'invoke')`. Readiness (daemon up, project indexed)
+  // is handled lazily by `resolveMcpServerDefinition`.
+  doRegisterMcp(context);
+
+  // Status check runs afterwards purely to drive the status bar (init hint).
+  void refreshInitStatus();
 }
 
-async function doActivate(context: vscode.ExtensionContext) {
+/**
+ * Check whether this project is initialized and update the status bar.
+ * Display-only — never gates registration. Each project is checked
+ * independently against its own root.
+ */
+async function refreshInitStatus() {
   if (!_root || !_codegraphPath) { return; }
-
-  // Check project initialization (async — don't block extension host)
   try {
     const stdout = await new Promise<string>((resolve, reject) => {
       cp.execFile(_codegraphPath!, ["status", _root!, "--json"], {
@@ -66,42 +86,26 @@ async function doActivate(context: vscode.ExtensionContext) {
     const result = JSON.parse(stdout);
     if (!result.initialized) {
       _statusBar.text = "$(info) CodeGraph: Not initialized";
-      _statusBar.tooltip = `项目未初始化，点击初始化`;
+      _statusBar.tooltip = "项目未初始化，点击初始化";
       _statusBar.command = "codegraph.initProject";
       _statusBar.backgroundColor = new vscode.ThemeColor(
         "statusBarItem.warningBackground"
       );
       _statusBar.show();
-      return;
     }
   } catch {
-    // Status check failed, still try to register
+    // Status check failed — leave whatever doRegisterMcp set on the status bar.
   }
-
-  await doRegisterMcp(context);
 }
 
 async function doRegisterMcp(context: vscode.ExtensionContext) {
   if (!_root || !_codegraphPath) { return; }
 
-  _statusBar.text = "$(loading~spin) CodeGraph: Starting daemon...";
-  _statusBar.tooltip = "预热 daemon...";
-  _statusBar.backgroundColor = undefined;
-  _statusBar.show();
-
-  // CRITICAL: Start daemon BEFORE registering provider.
-  // Use hello handshake (same as codegraph proxy) to ensure daemon is truly
-  // ready — not just socket file exists. The daemon writes a hello JSON line
-  // on every new connection; if we can read + verify it, the engine is up.
   const sockPath = path.join(_root, ".codegraph", "daemon.sock");
-  const ready = await prewarmDaemon(_codegraphPath, _root, 15000);
-  if (!ready) {
-    _statusBar.text = "$(warning) CodeGraph: Daemon timeout";
-    _statusBar.tooltip = "daemon 启动超时，工具调用可能失败";
-    _statusBar.backgroundColor = new vscode.ThemeColor(
-      "statusBarItem.warningBackground"
-    );
-  }
+
+  // Bump the server version on every (re)registration so VS Code never reuses a
+  // stale/dead cached server connection from a previous session.
+  _mcpVersion = `${_extensionVersion}+${Date.now()}`;
 
   // Dispose previous registration if any (restart)
   _mcpDisposable?.dispose();
@@ -110,6 +114,15 @@ async function doRegisterMcp(context: vscode.ExtensionContext) {
   // Create change event emitter for this registration
   _mcpChangeEmitter = new vscode.EventEmitter<void>();
 
+  // CRITICAL: register the provider IMMEDIATELY, do NOT block on prewarm.
+  // VS Code caches the tool list across sessions and exposes those tools to
+  // Copilot the moment the window opens. If we delayed registration by
+  // awaiting a (≤15s) prewarm, there would be a window where the cached tools
+  // are callable but no provider exists to resolve/start the server → the call
+  // routes to `undefined` → `TypeError: ... (reading 'invoke')`.
+  // Readiness is instead guaranteed lazily by `resolveMcpServerDefinition`
+  // below, which VS Code awaits before actually starting the server. Prewarm
+  // now runs in the background purely to make that first call fast.
   _mcpDisposable = vscode.lm.registerMcpServerDefinitionProvider(
     "codegraph",
     {
@@ -121,7 +134,7 @@ async function doRegisterMcp(context: vscode.ExtensionContext) {
             _codegraphPath!,
             ["serve", "--mcp", "--path", _root!],
             undefined,
-            "1.0.0"
+            _mcpVersion
           ),
         ];
       },
@@ -164,11 +177,36 @@ async function doRegisterMcp(context: vscode.ExtensionContext) {
   );
   context.subscriptions.push(_mcpDisposable);
 
-  _statusBar.text = "$(check) CodeGraph: Ready";
-  _statusBar.tooltip = `CodeGraph MCP 已注册，daemon 已就绪`;
+  // Provider is live immediately; daemon warms up in the background.
+  _statusBar.text = "$(loading~spin) CodeGraph: Warming up...";
+  _statusBar.tooltip = "MCP 已注册，daemon 预热中（首次调用前完成即可）";
   _statusBar.command = undefined;
   _statusBar.backgroundColor = undefined;
   _statusBar.show();
+
+  // Background prewarm — does NOT gate registration. Its only job is to make
+  // the first real tool call fast. Correctness (daemon truly ready before a
+  // call runs) is still guaranteed by resolveMcpServerDefinition above.
+  const changeEmitter = _mcpChangeEmitter;
+  const registeredVersion = _mcpVersion;
+  void prewarmDaemon(_codegraphPath, _root, 15000).then((ready) => {
+    // Ignore if a newer registration superseded this one (e.g. restart).
+    if (_mcpVersion !== registeredVersion) { return; }
+    if (ready) {
+      _statusBar.text = "$(check) CodeGraph: Ready";
+      _statusBar.tooltip = "CodeGraph MCP 已注册，daemon 已就绪";
+      _statusBar.backgroundColor = undefined;
+      // Notify VS Code the definition is now backed by a ready daemon so it
+      // re-resolves against the live connection instead of any stale handle.
+      try { changeEmitter?.fire(); } catch { /* ignore */ }
+    } else {
+      _statusBar.text = "$(check) CodeGraph: Ready";
+      _statusBar.tooltip =
+        "MCP 已注册；daemon 预热超时，首次调用可能需冷启动";
+      _statusBar.backgroundColor = undefined;
+    }
+    _statusBar.show();
+  });
 }
 
 async function doRestart(context: vscode.ExtensionContext) {
