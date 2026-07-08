@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.0.26](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.25...v0.0.26) (2026-07-08)
+
+
+### Bug Fixes
+
+* 用 hello 握手验证 daemon 真正就绪（解决首次调用 undefined.invoke） ([0e1ce74](https://github.com/SvenZhao/codegraph-auto-mcp/commit/0e1ce7456640f8bc952f551c973105000140f683))
+
 ### [0.0.25](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.24...v0.0.25) (2026-07-07)
 
 
