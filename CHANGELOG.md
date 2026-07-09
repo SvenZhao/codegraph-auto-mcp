@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.0.28](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.27...v0.0.28) (2026-07-09)
+
+
+### Bug Fixes
+
+* 未初始化时禁止prewarmDaemon自动spawn daemon创建.codegraph目录 ([2ad076c](https://github.com/SvenZhao/codegraph-auto-mcp/commit/2ad076cb619e64584ebf7cc7b8bb7eaac4d190dc))
+
 ### [0.0.27](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.26...v0.0.27) (2026-07-08)
 
 
