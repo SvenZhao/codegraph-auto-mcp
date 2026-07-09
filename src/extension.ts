@@ -101,7 +101,9 @@ async function refreshInitStatus() {
 async function doRegisterMcp(context: vscode.ExtensionContext) {
   if (!_root || !_codegraphPath) { return; }
 
-  const sockPath = path.join(_root, ".codegraph", "daemon.sock");
+  const codegraphDir = path.join(_root, ".codegraph");
+  const sockPath = path.join(codegraphDir, "daemon.sock");
+  const isInitialized = fs.existsSync(codegraphDir);
 
   // Bump the server version on every (re)registration so VS Code never reuses a
   // stale/dead cached server connection from a previous session.
@@ -145,6 +147,11 @@ async function doRegisterMcp(context: vscode.ExtensionContext) {
         server: vscode.McpStdioServerDefinition,
         _token: vscode.CancellationToken
       ) {
+        // 项目未初始化 → 跳过 daemon 验证，不自动 init
+        if (!fs.existsSync(path.join(_root!, ".codegraph"))) {
+          return server;
+        }
+
         const ok = await verifyDaemonHello(sockPath, 3000);
         if (!ok) {
           // Daemon unresponsive — clean up stale state and respawn
@@ -177,36 +184,41 @@ async function doRegisterMcp(context: vscode.ExtensionContext) {
   );
   context.subscriptions.push(_mcpDisposable);
 
-  // Provider is live immediately; daemon warms up in the background.
-  _statusBar.text = "$(loading~spin) CodeGraph: Warming up...";
-  _statusBar.tooltip = "MCP 已注册，daemon 预热中（首次调用前完成即可）";
-  _statusBar.command = undefined;
-  _statusBar.backgroundColor = undefined;
-  _statusBar.show();
-
-  // Background prewarm — does NOT gate registration. Its only job is to make
-  // the first real tool call fast. Correctness (daemon truly ready before a
-  // call runs) is still guaranteed by resolveMcpServerDefinition above.
-  const changeEmitter = _mcpChangeEmitter;
-  const registeredVersion = _mcpVersion;
-  void prewarmDaemon(_codegraphPath, _root, 15000).then((ready) => {
-    // Ignore if a newer registration superseded this one (e.g. restart).
-    if (_mcpVersion !== registeredVersion) { return; }
-    if (ready) {
-      _statusBar.text = "$(check) CodeGraph: Ready";
-      _statusBar.tooltip = "CodeGraph MCP 已注册，daemon 已就绪";
-      _statusBar.backgroundColor = undefined;
-      // Notify VS Code the definition is now backed by a ready daemon so it
-      // re-resolves against the live connection instead of any stale handle.
-      try { changeEmitter?.fire(); } catch { /* ignore */ }
-    } else {
-      _statusBar.text = "$(check) CodeGraph: Ready";
-      _statusBar.tooltip =
-        "MCP 已注册；daemon 预热超时，首次调用可能需冷启动";
-      _statusBar.backgroundColor = undefined;
-    }
+  // Provider is live immediately.
+  // 只在已初始化时显示预热状态并后台 prewarm；未 init 的状态栏由 refreshInitStatus 更新
+  if (isInitialized) {
+    _statusBar.text = "$(loading~spin) CodeGraph: Warming up...";
+    _statusBar.tooltip = "MCP 已注册，daemon 预热中（首次调用前完成即可）";
+    _statusBar.command = undefined;
+    _statusBar.backgroundColor = undefined;
     _statusBar.show();
-  });
+
+    // Background prewarm — does NOT gate registration. Its only job is to make
+    // the first real tool call fast. Correctness (daemon truly ready before a
+    // call runs) is still guaranteed by resolveMcpServerDefinition above.
+    const changeEmitter = _mcpChangeEmitter;
+    const registeredVersion = _mcpVersion;
+    void prewarmDaemon(_codegraphPath, _root, 15000).then((ready) => {
+      // Ignore if a newer registration superseded this one (e.g. restart).
+      if (_mcpVersion !== registeredVersion) { return; }
+      if (ready) {
+        _statusBar.text = "$(check) CodeGraph: Ready";
+        _statusBar.tooltip = "CodeGraph MCP 已注册，daemon 已就绪";
+        _statusBar.backgroundColor = undefined;
+        // Notify VS Code the definition is now backed by a ready daemon so it
+        // re-resolves against the live connection instead of any stale handle.
+        try { changeEmitter?.fire(); } catch { /* ignore */ }
+      } else {
+        _statusBar.text = "$(check) CodeGraph: Ready";
+        _statusBar.tooltip =
+          "MCP 已注册；daemon 预热超时，首次调用可能需冷启动";
+        _statusBar.backgroundColor = undefined;
+      }
+      _statusBar.show();
+    });
+  } else {
+    // 不设 status bar，由 refreshInitStatus 异步更新为 "Not initialized"
+  }
 }
 
 async function doRestart(context: vscode.ExtensionContext) {
@@ -387,7 +399,13 @@ async function prewarmDaemon(
   root: string,
   timeoutMs = 15000
 ): Promise<boolean> {
-  const sockPath = path.join(root, ".codegraph", "daemon.sock");
+  const codegraphDir = path.join(root, ".codegraph");
+  const sockPath = path.join(codegraphDir, "daemon.sock");
+
+  // 项目未初始化 → 不 spawn daemon（避免自动创建 .codegraph 目录）
+  if (!fs.existsSync(codegraphDir)) {
+    return false;
+  }
 
   // Daemon 已存在 → 直接验证 hello
   if (fs.existsSync(sockPath)) {
