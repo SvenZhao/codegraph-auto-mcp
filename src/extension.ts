@@ -86,8 +86,8 @@ async function refreshInitStatus() {
     const result = JSON.parse(stdout);
     if (!result.initialized) {
       _statusBar.text = "$(info) CodeGraph: Not initialized";
-      _statusBar.tooltip = "项目未初始化，点击初始化";
-      _statusBar.command = "codegraph.initProject";
+      _statusBar.tooltip = "项目未初始化，点击查看操作菜单";
+      _statusBar.command = "codegraph.showMenu";
       _statusBar.backgroundColor = new vscode.ThemeColor(
         "statusBarItem.warningBackground"
       );
@@ -189,7 +189,7 @@ async function doRegisterMcp(context: vscode.ExtensionContext) {
   if (isInitialized) {
     _statusBar.text = "$(loading~spin) CodeGraph: Warming up...";
     _statusBar.tooltip = "MCP 已注册，daemon 预热中（首次调用前完成即可）";
-    _statusBar.command = undefined;
+    _statusBar.command = "codegraph.showMenu";
     _statusBar.backgroundColor = undefined;
     _statusBar.show();
 
@@ -204,6 +204,7 @@ async function doRegisterMcp(context: vscode.ExtensionContext) {
       if (ready) {
         _statusBar.text = "$(check) CodeGraph: Ready";
         _statusBar.tooltip = "CodeGraph MCP 已注册，daemon 已就绪";
+        _statusBar.command = "codegraph.showMenu";
         _statusBar.backgroundColor = undefined;
         // Notify VS Code the definition is now backed by a ready daemon so it
         // re-resolves against the live connection instead of any stale handle.
@@ -212,6 +213,7 @@ async function doRegisterMcp(context: vscode.ExtensionContext) {
         _statusBar.text = "$(check) CodeGraph: Ready";
         _statusBar.tooltip =
           "MCP 已注册；daemon 预热超时，首次调用可能需冷启动";
+        _statusBar.command = "codegraph.showMenu";
         _statusBar.backgroundColor = undefined;
       }
       _statusBar.show();
@@ -289,6 +291,7 @@ async function doInit() {
 async function doSync() {
   if (!_codegraphPath || !_root) { return; }
   _statusBar.text = "$(loading~spin) CodeGraph: Syncing...";
+  _statusBar.command = "codegraph.showMenu";
   _statusBar.show();
   try {
     await new Promise<void>((resolve, reject) => {
