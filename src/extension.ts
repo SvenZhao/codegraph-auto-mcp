@@ -16,6 +16,7 @@ let _extensionVersion = "0.0.0";
 // reusing it — a reused dead connection surfaces as
 // `TypeError: Cannot read properties of undefined (reading 'invoke')`.
 let _mcpVersion = "1.0.0";
+let _initTerminal: vscode.Terminal | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
   _context = context;
@@ -236,8 +237,19 @@ async function doRestart(context: vscode.ExtensionContext) {
     const pidPath = path.join(_root, ".codegraph", "daemon.pid");
     try {
       if (fs.existsSync(pidPath)) {
-        const pid = parseInt(fs.readFileSync(pidPath, "utf-8").trim(), 10);
-        if (pid) { process.kill(pid, "SIGTERM"); }
+        const raw = fs.readFileSync(pidPath, "utf-8").trim();
+        // Lockfile is JSON: { pid, version, socketPath, startedAt }
+        // Be tolerant of legacy plain-pid format too.
+        let pid: number | undefined;
+        try {
+          const info = JSON.parse(raw);
+          pid = typeof info.pid === "number" ? info.pid : undefined;
+        } catch {
+          pid = parseInt(raw, 10);
+        }
+        if (pid && Number.isFinite(pid)) {
+          process.kill(pid, "SIGTERM");
+        }
       }
     } catch { /* ignore */ }
     // Wait for socket to disappear (daemon fully dead) before proceeding
@@ -254,22 +266,29 @@ async function doRestart(context: vscode.ExtensionContext) {
 
 async function doInit() {
   if (!_codegraphPath || !_root) { return; }
-  const terminal = vscode.window.createTerminal("CodeGraph Init");
-  terminal.sendText(`cd "${_root}" && ${_codegraphPath} init`);
-  terminal.show();
+  // Dispose previous init terminal to avoid accumulation on repeated calls
+  try { _initTerminal?.dispose(); } catch { /* ignore */ }
+  _initTerminal = vscode.window.createTerminal("CodeGraph Init");
+  _initTerminal.sendText(`cd "${_root}" && ${_codegraphPath} init`);
+  _initTerminal.show();
 
   // Watch for .codegraph directory creation (init completion)
   const codegraphDir = path.join(_root, ".codegraph");
   let initHandled = false;
   const watcher = fs.watch(_root, async (eventType, filename) => {
     if (initHandled) { return; }
-    // Fast path: skip events clearly unrelated to .codegraph
+    // Fast path: skip events clearly unrelated to .codegraph.
+    // filename can be null on macOS (rename/delete events), in which case we
+    // fall through to check .codegraph directory existence directly.
     if (filename && filename !== ".codegraph" && !filename.startsWith(".codegraph")) {
       return;
     }
     if (fs.existsSync(codegraphDir)) {
       initHandled = true;
       watcher.close();
+      // Clean up terminal (init command has completed)
+      try { _initTerminal?.dispose(); } catch { /* ignore */ }
+      _initTerminal = undefined;
       // Give init a moment to finish writing index files
       await new Promise(r => setTimeout(r, 1000));
       _statusBar.text = "$(check) CodeGraph: Initialized";
@@ -284,8 +303,12 @@ async function doInit() {
       }
     }
   });
-  // Auto-close watcher after 5 minutes
-  setTimeout(() => { try { watcher.close(); } catch { /* ignore */ } }, 300_000);
+  // Auto-close watcher after 5 minutes (also clean up terminal)
+  setTimeout(() => {
+    try { watcher.close(); } catch { /* ignore */ }
+    try { _initTerminal?.dispose(); } catch { /* ignore */ }
+    _initTerminal = undefined;
+  }, 300_000);
 }
 
 async function doSync() {
@@ -309,7 +332,10 @@ async function doSync() {
     vscode.window.showErrorMessage(`CodeGraph: sync 失败 - ${err.message}`);
   }
   setTimeout(() => {
-    if (_statusBar.text.includes("Sync")) {
+    // Only reset to Ready if the status bar still shows our sync result text,
+    // not if another operation has since updated it.
+    const cur = _statusBar.text;
+    if (cur === "$(check) CodeGraph: Synced" || cur === "$(error) CodeGraph: Sync failed") {
       _statusBar.text = "$(check) CodeGraph: Ready";
     }
   }, 3000);
@@ -355,6 +381,7 @@ function verifyDaemonHello(sockPath: string, timeoutMs = 5000): Promise<boolean>
 
     const timer = setTimeout(() => done(false), timeoutMs);
     const socket = net.createConnection(sockPath);
+    socket.setTimeout(timeoutMs);
     socket.setEncoding("utf8");
 
     let buf = "";
@@ -387,6 +414,7 @@ function verifyDaemonHello(sockPath: string, timeoutMs = 5000): Promise<boolean>
       }
     });
 
+    socket.on("timeout", () => { socket.destroy(); done(false); });
     socket.on("error", () => done(false));
     socket.on("close", () => done(false));
   });
@@ -419,7 +447,7 @@ async function prewarmDaemon(
   const child = cp.spawn(
     codegraphPath,
     ["serve", "--mcp", "--path", root],
-    { stdio: ["pipe", "ignore", "ignore"], detached: true }
+    { stdio: ["ignore", "ignore", "ignore"], detached: true }
   );
   child.unref();
 
@@ -521,7 +549,7 @@ function resolveCodegraph(): string | undefined {
     if (isFish) {
       shellCandidates.push({
         bin: userShell,
-        args: ["-il", "-c", "command -s codegraph"],
+        args: ["-il", "-c", "type -s codegraph"],
       });
     } else {
       shellCandidates.push({
