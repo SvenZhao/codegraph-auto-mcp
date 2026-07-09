@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.0.30](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.28...v0.0.30) (2026-07-09)
+
+
+### Features
+
+* **statusbar:** 统一状态栏交互入口 ([fe178c4](https://github.com/SvenZhao/codegraph-auto-mcp/commit/fe178c47864fd729489dad9917ba15c5d066919a))
+
+
+### Bug Fixes
+
+* 修复 5 个 bug ([1303a09](https://github.com/SvenZhao/codegraph-auto-mcp/commit/1303a097b0c77ca5ecc382038ef389f5b4d531d5))
+
 ### [0.0.28](https://github.com/SvenZhao/codegraph-auto-mcp/compare/v0.0.27...v0.0.28) (2026-07-09)
 
 
